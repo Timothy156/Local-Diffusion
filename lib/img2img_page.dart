@@ -57,13 +57,13 @@ class _Img2ImgPageState extends State<Img2ImgPage>
   final Map<String, GlobalKey> _loraKeys = {};
   bool useTAESD = false;
   bool useVAETiling = false;
-  double clipSkip = 0; // Default to match main.dart
+  double clipSkip = 2; // Default to match main.dart
   bool useVAE = false;
-  String samplingMethod = 'euler_a';
-  double cfg = 7;
-  int steps = 25;
-  int width = 512;
-  int height = 512;
+  String samplingMethod = 'tcd';
+  double cfg = 1;
+  int steps = 2;
+  int width = 256;
+  int height = 256;
   String seed = "-1";
   String prompt = '';
   String negativePrompt = '';
@@ -86,7 +86,6 @@ class _Img2ImgPageState extends State<Img2ImgPage>
       FFIBindings.getCurrentBackend(); // Get initial backend
   final List<String> _availableBackends = [
     'CPU',
-    'Vulkan',
     'OpenCL'
   ]; // Available backends
 
@@ -137,18 +136,14 @@ class _Img2ImgPageState extends State<Img2ImgPage>
   String _controlImageProcessingMode =
       'Resize'; // 'Resize' or 'Crop' for ControlNet image
   final List<String> samplingMethods = const [
+    'tcd',
+    'lcm'
     'euler_a',
     'euler',
-    'heun',
     'dpm2',
     'dmp ++2s_a',
     'dmp++2m',
-    'dpm++2mv2',
-    'ipndm',
-    'ipndm_v',
-    'lcm',
-    'ddim_trailing', // New sampler
-    'tcd' // New sampler
+    'dpm++2mv2'
   ];
 
   void _showTemporaryError(String error) {
@@ -546,8 +541,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
 
   void showModelLoadDialog() {
     String selectedQuantization = 'NONE';
-    String selectedSchedule = 'DEFAULT';
-    bool useFlashAttention = false;
+    String selectedSchedule = 'EXPONENTIAL';
+    bool useFlashAttention = true;
     String? flashAttentionError; // Added state for error message
 
     final List<String> quantizationOptions = [
@@ -567,10 +562,10 @@ class _Img2ImgPageState extends State<Img2ImgPage>
     ];
 
     final List<String> scheduleOptions = [
+      'EXPONENTIAL',
       'DEFAULT',
       'DISCRETE',
       'KARRAS',
-      'EXPONENTIAL',
       'AYS'
     ];
 
@@ -3364,14 +3359,14 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<String>(
-                    placeholder: const Text('euler_a'),
+                    placeholder: const Text('tcd'),
                     options: samplingMethods
                         .map((method) =>
                             ShadOption(value: method, child: Text(method)))
                         .toList(),
                     selectedOptionBuilder: (context, value) => Text(value),
                     onChanged: (String? value) =>
-                        setState(() => samplingMethod = value ?? 'euler_a'),
+                        setState(() => samplingMethod = value ?? 'tcd'),
                   ),
                 ),
               ],
@@ -3385,8 +3380,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                   child: ShadSlider(
                     initialValue: cfg,
                     min: 1,
-                    max: 20,
-                    divisions: 38,
+                    max: 8,
+                    divisions: 70,
                     onChanged: (v) => setState(() => cfg = v),
                   ),
                 ),
@@ -3402,8 +3397,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                   child: ShadSlider(
                     initialValue: steps.toDouble(),
                     min: 1,
-                    max: 50,
-                    divisions: 49,
+                    max: 12,
+                    divisions: 11,
                     onChanged: (v) => setState(() => steps = v.toInt()),
                   ),
                 ),
@@ -3437,7 +3432,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                     enabled: !_showCropUI, // Disable dropdown when cropping
                     placeholder: Text(
                       // Display effective width
-                      (_showCropUI ? width : (_inputWidth ?? 512))
+                      (_showCropUI ? width : (_inputWidth ?? 256))
                           .toString(), // Default to 512 if no input
                     ),
                     options: _showCropUI
@@ -3467,7 +3462,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                       (_showCropUI
                               ? height
                               : (_inputHeight ??
-                                  512)) // Default to 512 if no input
+                                  256)) // Default to 512 if no input
                           .toString(),
                     ),
                     options: _showCropUI
