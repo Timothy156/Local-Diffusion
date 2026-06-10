@@ -40,7 +40,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --target-platform android-arm64
 
       - name: Verify APK Exists
         id: apk
@@ -60,18 +60,6 @@ jobs:
           TAG="v$(date +'%Y.%m.%d-%H%M%S')"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Delete Old Releases
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release list --limit 100 --json tagName -q '.[].tagName' | while read tag
-          do
-            if [ -n "$tag" ]; then
-              echo "Deleting release $tag"
-              gh release delete "$tag" --yes || true
-              git push origin ":refs/tags/$tag" || true
-            fi
-          done
 
       - name: Create Release
         env:
