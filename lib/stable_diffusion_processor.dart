@@ -168,7 +168,7 @@ class StableDiffusionProcessor {
     this.vaePath,
     this.embedDirPath,
     this.stackedIdEmbedDir,
-    this.clipSkip = 1,
+    this.clipSkip = 2,
     this.vaeTiling = false,
     this.controlNetPath,
     this.controlImageData,
@@ -758,8 +758,8 @@ class StableDiffusionProcessor {
     double guidance = 3.5, // Default changed as per UI
     double eta = 0.0, // New parameter with default
     int width = 256,
-    int height = 256,
-    int sampleMethod = 11,
+    int height = 192,
+    int sampleMethod = 0,
     int sampleSteps = 2,
     int seed = -1, // Default changed as per UI
     int batchCount = 1,
