@@ -9,12 +9,16 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: apk-release
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Java
@@ -26,46 +30,48 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.29.3"
+          cache: true
 
       - name: Flutter Version
         run: flutter --version
 
-      - name: Install Dependencies
+      - name: Get Dependencies
         run: flutter pub get
 
       - name: Build Release APK
         run: flutter build apk --release
 
       - name: Verify APK Exists
-        id: apk_check
+        id: apk
         run: |
           APK="build/app/outputs/flutter-apk/app-release.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "APK not found!"
+            echo "APK was not generated."
             exit 1
           fi
 
-          echo "apk=$APK" >> $GITHUB_OUTPUT
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
 
-      # Only runs if build succeeded and APK exists
-      - name: Delete Previous Releases
+      - name: Generate Release Tag
+        id: tag
+        run: |
+          TAG="v$(date +'%Y.%m.%d-%H%M%S')"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Delete Old Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release list --limit 100 | while read tag rest
+          gh release list --limit 100 --json tagName -q '.[].tagName' | while read tag
           do
-            echo "Deleting release: $tag"
-            gh release delete "$tag" --yes || true
-            git push origin ":refs/tags/$tag" || true
+            if [ -n "$tag" ]; then
+              echo "Deleting release $tag"
+              gh release delete "$tag" --yes || true
+              git push origin ":refs/tags/$tag" || true
+            fi
           done
-
-      - name: Generate Tag
-        id: tag
-        run: |
-          TAG=v$(date +'%Y.%m.%d-%H%M%S')
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
       - name: Create Release
         env:
@@ -73,12 +79,6 @@ jobs:
         run: |
           gh release create \
             "${{ steps.tag.outputs.tag }}" \
-            "${{ steps.apk_check.outputs.apk }}" \
+            "${{ steps.apk.outputs.apk }}" \
             --title "${{ steps.tag.outputs.tag }}" \
             --notes "Automated APK build"
-
-      - name: Show Release URL
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release view "${{ steps.tag.outputs.tag }}"
