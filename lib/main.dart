@@ -255,7 +255,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   // UI State variables
   bool useTAESD = false;
   bool useVAETiling = false;
-  double clipSkip = 0; // Existing, used for new accordion
+  double clipSkip = 2; // Existing, used for new accordion
   double eta = 0.0; // New state for eta slider
   double guidance = 3.5; // New state for guidance slider
   double slgScale = 0.0; // New state for slg-scale slider
@@ -267,13 +267,13 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   String? _skipLayersErrorText; // Error text for skip-layers validation
 
   bool useVAE = false;
-  String samplingMethod = 'euler_a';
-  double cfg = 7;
-  int steps = 25;
-  int width = 512;
-  int height = 512;
+  String samplingMethod = 'tcd';
+  double cfg = 1;
+  int steps = 2;
+  int width = 256;
+  int height = 256;
   String seed = "-1";
-  String prompt = '';
+  String prompt = '1girl, solo, upper body, blonde hair, blue eyes, red shirt, city';
   String negativePrompt = '';
   double progress = 0;
   String status = '';
@@ -287,7 +287,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   List<String> _generationLogs = []; // To store logs for the last generation
   bool _showLogsButton = false; // To control visibility of the log button
   bool _isDiffusionModelType = false; // Added state for the new switch
-  String _selectedBackend = 'CPU'; // State for the selected backend
+  String _selectedBackend = 'OpenCL'; // State for the selected backend
   final List<String> _availableBackends = [
     'CPU',
     'Vulkan',
@@ -333,8 +333,8 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
     'euler',
     'heun',
     'dpm2',
-    'dmp ++2s_a',
-    'dmp++2m',
+    'dpm++2s_a',
+    'dpm++2m',
     'dpm++2mv2',
     'ipndm',
     'ipndm_v',
@@ -678,8 +678,8 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
 
       // Reset UI elements (optional, but good practice)
       _promptController.clear();
-      prompt = '';
-      negativePrompt = '';
+      //prompt = '';
+      //negativePrompt = '';
       // Reset advanced options to defaults if needed
       // clipSkip = 0;
       // eta = 0.0;
