@@ -678,26 +678,26 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
 
       // Reset UI elements (optional, but good practice)
       _promptController.clear();
-      //prompt = '';
-      //negativePrompt = '';
+      prompt = '1girl, solo, upper body, blonde hair, blue eyes, red shirt, city';
+      egativePrompt = '';
       // Reset advanced options to defaults if needed
-      // clipSkip = 0;
-      // eta = 0.0;
-      // guidance = 3.5;
-      // slgScale = 0.0;
-      // skipLayersText = '';
-      // _skipLayersController.clear();
-      // skipLayerStart = 0.01;
-      // skipLayerEnd = 0.2;
-      // samplingMethod = 'euler_a';
-      // cfg = 7;
-      // steps = 25;
-      // width = 512;
-      // height = 512;
-      // seed = "-1";
-      // controlStrength = 0.9;
-      // _controlImageProcessingMode = 'Resize';
-      // _isDiffusionModelType = false;
+      clipSkip = 2;
+       eta = 0.0;
+       guidance = 3.5;
+       slgScale = 0.0;
+       skipLayersText = '';
+       _skipLayersController.clear();
+       skipLayerStart = 0.01;
+      skipLayerEnd = 0.2;
+      samplingMethod = 'tcd';
+      cfg = 1;
+      steps = 2;
+      width = 256;
+      height = 256;
+      seed = "-1";
+      controlStrength = 0.9;
+      //_controlImageProcessingMode = 'Resize';
+      //_isDiffusionModelType = false;
     });
   }
 
@@ -706,7 +706,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   void showModelLoadDialog() {
     String selectedQuantization = 'NONE';
     String selectedSchedule = 'DEFAULT';
-    bool useFlashAttention = false;
+    bool useFlashAttention = true;
     String? flashAttentionError; // Added state for error message
 
     final List<String> quantizationOptions = [
