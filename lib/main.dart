@@ -271,7 +271,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   double cfg = 1;
   int steps = 2;
   int width = 256;
-  int height = 256;
+  int height = 192;
   String seed = "-1";
   String prompt = '1girl, solo, upper body, blonde hair, blue eyes, red shirt, city';
   String negativePrompt = '';
@@ -287,10 +287,9 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   List<String> _generationLogs = []; // To store logs for the last generation
   bool _showLogsButton = false; // To control visibility of the log button
   bool _isDiffusionModelType = false; // Added state for the new switch
-  String _selectedBackend = 'OpenCL'; // State for the selected backend
+  String _selectedBackend = 'CPU'; // State for the selected backend
   final List<String> _availableBackends = [
     'CPU',
-    'Vulkan',
     'OpenCL'
   ]; // Available backends
 
@@ -329,18 +328,14 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   String _controlImageProcessingMode = 'Resize'; // 'Resize' or 'Crop'
 
   final List<String> samplingMethods = const [
+    'tcd',
+    'lcm',
     'euler_a',
     'euler',
-    'heun',
     'dpm2',
     'dpm++2s_a',
     'dpm++2m',
-    'dpm++2mv2',
-    'ipndm',
-    'ipndm_v',
-    'lcm',
-    'ddim_trailing', // New sampler
-    'tcd' // New sampler
+    'dpm++2mv2'
   ];
 
   List<int> getWidthOptions() {
@@ -693,7 +688,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
       cfg = 1;
       steps = 2;
       width = 256;
-      height = 256;
+      height = 192;
       seed = "-1";
       controlStrength = 0.9;
       //_controlImageProcessingMode = 'Resize';
@@ -705,7 +700,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
 
   void showModelLoadDialog() {
     String selectedQuantization = 'NONE';
-    String selectedSchedule = 'DEFAULT';
+    String selectedSchedule = 'EXPONENTIAL';
     bool useFlashAttention = true;
     String? flashAttentionError; // Added state for error message
 
@@ -726,10 +721,10 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
     ];
 
     final List<String> scheduleOptions = [
+      'EXPONENTIAL',
       'DEFAULT',
       'DISCRETE',
       'KARRAS',
-      'EXPONENTIAL',
       'AYS'
     ];
 
