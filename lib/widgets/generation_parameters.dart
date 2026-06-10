@@ -21,7 +21,7 @@ class GenerationParameters {
     this.height = 192,
     this.sampleMethod = 0,
     this.sampleSteps = 2,
-    this.seed = 42,
+    this.seed = -1,
     this.batchCount = 1,
   });
 
