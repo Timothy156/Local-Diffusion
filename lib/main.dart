@@ -3215,7 +3215,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<String>(
-                    placeholder: const Text('euler_a'),
+                    placeholder: const Text('tcd'),
                     options: samplingMethods
                         .map((method) => ShadOption(
                               value: method,
@@ -3224,7 +3224,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                         .toList(),
                     selectedOptionBuilder: (context, value) => Text(value),
                     onChanged: (String? value) =>
-                        setState(() => samplingMethod = value ?? 'euler_a'),
+                        setState(() => samplingMethod = value ?? 'tcd'),
                   ),
                 ),
               ],
@@ -3238,8 +3238,8 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   child: ShadSlider(
                     initialValue: cfg,
                     min: 1,
-                    max: 20,
-                    divisions: 38,
+                    max: 10,
+                    divisions: 90,
                     onChanged: (v) => setState(() => cfg = v),
                   ),
                 ),
@@ -3255,8 +3255,8 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   child: ShadSlider(
                     initialValue: steps.toDouble(),
                     min: 1,
-                    max: 50,
-                    divisions: 49,
+                    max: 8,
+                    divisions: 7,
                     onChanged: (v) => setState(() => steps = v.toInt()),
                   ),
                 ),
@@ -3271,7 +3271,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 Expanded(
                   child: ShadSelect<int>(
                     maxHeight: 200, // Added max height
-                    placeholder: const Text('512'),
+                    placeholder: const Text('256'),
                     options: getWidthOptions()
                         .map((w) => ShadOption(
                               value: w,
@@ -3291,7 +3291,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                 Expanded(
                   child: ShadSelect<int>(
                     maxHeight: 200, // Added max height
-                    placeholder: const Text('512'),
+                    placeholder: const Text('192'),
                     options: getHeightOptions()
                         .map((h) => ShadOption(
                               value: h,
