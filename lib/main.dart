@@ -679,15 +679,15 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
       // Reset UI elements (optional, but good practice)
       _promptController.clear();
       prompt = '1girl, solo, upper body, blonde hair, blue eyes, red shirt, city';
-      egativePrompt = '';
+      negativePrompt = '';
       // Reset advanced options to defaults if needed
       clipSkip = 2;
-       eta = 0.0;
-       guidance = 3.5;
-       slgScale = 0.0;
-       skipLayersText = '';
-       _skipLayersController.clear();
-       skipLayerStart = 0.01;
+      eta = 0.0;
+      guidance = 3.5;
+      slgScale = 0.0;
+      skipLayersText = '';
+      _skipLayersController.clear();
+      skipLayerStart = 0.01;
       skipLayerEnd = 0.2;
       samplingMethod = 'tcd';
       cfg = 1;
