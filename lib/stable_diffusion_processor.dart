@@ -753,14 +753,14 @@ class StableDiffusionProcessor {
   Future<void> generateImage({
     required String prompt,
     String negativePrompt = "",
-    int clipSkip = 0, // Default changed to 0 as per UI
-    double cfgScale = 7.0,
+    int clipSkip = 2, // Default changed to 0 as per UI
+    double cfgScale = 1.0,
     double guidance = 3.5, // Default changed as per UI
     double eta = 0.0, // New parameter with default
-    int width = 512,
-    int height = 512,
-    int sampleMethod = 0,
-    int sampleSteps = 20,
+    int width = 256,
+    int height = 256,
+    int sampleMethod = 11,
+    int sampleSteps = 2,
     int seed = -1, // Default changed as per UI
     int batchCount = 1,
     String? inputIdImagesPath,
