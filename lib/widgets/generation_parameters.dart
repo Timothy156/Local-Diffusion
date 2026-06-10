@@ -14,13 +14,13 @@ class GenerationParameters {
   GenerationParameters({
     required this.prompt,
     this.negativePrompt = "",
-    this.clipSkip = 1,
-    this.cfgScale = 7.0,
+    this.clipSkip = 2,
+    this.cfgScale = 1.0,
     this.guidance = 1.0,
-    this.width = 512,
-    this.height = 512,
+    this.width = 256,
+    this.height = 192,
     this.sampleMethod = 0,
-    this.sampleSteps = 20,
+    this.sampleSteps = 2,
     this.seed = 42,
     this.batchCount = 1,
   });
