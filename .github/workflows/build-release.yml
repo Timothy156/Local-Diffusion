@@ -1,0 +1,84 @@
+name: Build APK and Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Flutter Version
+        run: flutter --version
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build Release APK
+        run: flutter build apk --release
+
+      - name: Verify APK Exists
+        id: apk_check
+        run: |
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "APK not found!"
+            exit 1
+          fi
+
+          echo "apk=$APK" >> $GITHUB_OUTPUT
+
+      # Only runs if build succeeded and APK exists
+      - name: Delete Previous Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release list --limit 100 | while read tag rest
+          do
+            echo "Deleting release: $tag"
+            gh release delete "$tag" --yes || true
+            git push origin ":refs/tags/$tag" || true
+          done
+
+      - name: Generate Tag
+        id: tag
+        run: |
+          TAG=v$(date +'%Y.%m.%d-%H%M%S')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create \
+            "${{ steps.tag.outputs.tag }}" \
+            "${{ steps.apk_check.outputs.apk }}" \
+            --title "${{ steps.tag.outputs.tag }}" \
+            --notes "Automated APK build"
+
+      - name: Show Release URL
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ steps.tag.outputs.tag }}"
