@@ -777,12 +777,12 @@ class Img2ImgProcessor {
     required int outputHeight,
     required String prompt,
     String negativePrompt = "",
-    int clipSkip = 1,
-    double cfgScale = 7.0,
+    int clipSkip = 2,
+    double cfgScale = 1.0,
     double guidance = 1.0, // Already passed
     double eta = 0.0, // Already passed
     int sampleMethod = 0, // Already passed
-    int sampleSteps = 20, // Already passed
+    int sampleSteps = 2, // Already passed
     double strength = 0.5, // Already passed
     int seed = 42, // Already passed
     int batchCount = 1, // Already passed
