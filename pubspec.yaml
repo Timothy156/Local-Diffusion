@@ -69,7 +69,7 @@ dev_dependencies:
 flutter:
   assets:
     - assets/taesd/taesd_decoder.safetensors
-    - assets/taesd/taesdxl_decoder.safetensors
+    #- assets/taesd/taesdxl_decoder.safetensors
     #- assets/taesd/taesd3_decoder.safetensors
     #- assets/taesd/taef1_decoder.safetensors
 
