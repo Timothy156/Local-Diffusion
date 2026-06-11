@@ -64,8 +64,18 @@ dev_dependencies:
 # following page: https://dart.dev/tools/pub/pubspec
 
 # The following section is specific to Flutter packages.
-flutter:
 
+
+flutter:
+  assets:
+    - assets/taesd/taesd_decoder.safetensors
+    - assets/taesd/taesdxl_decoder.safetensors
+    #- assets/taesd/taesd3_decoder.safetensors
+    #- assets/taesd/taef1_decoder.safetensors
+
+
+  
+  
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
