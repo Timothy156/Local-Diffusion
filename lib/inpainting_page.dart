@@ -102,7 +102,7 @@ class _InpaintingPageState extends State<InpaintingPage>
   final Map<String, GlobalKey> _loraKeys = {};
   bool useTAESD = false;
   bool useVAETiling = false;
-  double clipSkip = 0.0; // Default changed to 0.0
+  double clipSkip = 2;
   bool useVAE = false;
   String samplingMethod = 'tcd';
   double cfg = 1;
@@ -629,7 +629,7 @@ class _InpaintingPageState extends State<InpaintingPage>
       prompt = '';
       negativePrompt = '';
       // Reset advanced options to defaults if needed
-      clipSkip = 0.0;
+      clipSkip = 2;
       eta = 0.0;
       guidance = 3.5;
       slgScale = 0.0;
@@ -1191,6 +1191,15 @@ class _InpaintingPageState extends State<InpaintingPage>
               },
             ),
             ListTile(
+              leading: const Icon(LucideIcons.palette, size: 32),
+              title: const Text('Inpainting',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              tileColor: theme.colorScheme.secondary.withOpacity(0.2),
+              onTap: () {
+                Navigator.pop(context);
+              },
+            ),
+            ListTile(
               leading: const Icon(LucideIcons.imageUpscale, size: 32),
               title: const Text('Upscaler',
                   style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1203,65 +1212,6 @@ class _InpaintingPageState extends State<InpaintingPage>
                 Navigator.pushReplacement(
                   context,
                   MaterialPageRoute(builder: (context) => const UpscalerPage()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.aperture, size: 32),
-              title: const Text('Photomaker',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => const PhotomakerPage()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.draw, size: 32),
-              title: const Text('Scribble to Image',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ScribblePage()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.palette, size: 32),
-              title: const Text('Inpainting',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              tileColor: theme.colorScheme.secondary.withOpacity(0.2),
-              onTap: () {
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.expand, size: 32),
-              title: const Text('Outpainting',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => const OutpaintingPage()),
                 );
               },
             ),
@@ -3372,14 +3322,14 @@ class _InpaintingPageState extends State<InpaintingPage>
                 const SizedBox(width: 8),
                 Expanded(
                   child: ShadSelect<String>(
-                    placeholder: const Text('euler_a'),
+                    placeholder: const Text('tcd'),
                     options: samplingMethods
                         .map((method) =>
                             ShadOption(value: method, child: Text(method)))
                         .toList(),
                     selectedOptionBuilder: (context, value) => Text(value),
                     onChanged: (String? value) =>
-                        setState(() => samplingMethod = value ?? 'euler_a'),
+                        setState(() => samplingMethod = value ?? 'tcd'),
                   ),
                 ),
               ],
