@@ -517,24 +517,24 @@ class _Img2ImgPageState extends State<Img2ImgPage>
       prompt = '';
       negativePrompt = '';
       // Reset advanced options to defaults if needed
-      // clipSkip = 0;
-      // eta = 0.0;
-      // guidance = 3.5;
-      // slgScale = 0.0;
-      // skipLayersText = '';
-      // _skipLayersController.clear();
-      // skipLayerStart = 0.01;
-      // skipLayerEnd = 0.2;
-      // samplingMethod = 'euler_a';
-      // cfg = 7;
-      // steps = 25;
-      // width = 512; // Reset width/height if needed, or keep based on last input?
-      // height = 512;
-      // seed = "-1";
-      // strength = 0.5;
-      // controlStrength = 0.9;
-      // _controlImageProcessingMode = 'Resize';
-      // _isDiffusionModelType = false;
+      clipSkip = 2;
+      eta = 0.0;
+      guidance = 3.5;
+      slgScale = 0.0;
+      skipLayersText = '';
+      _skipLayersController.clear();
+      skipLayerStart = 0.01;
+      skipLayerEnd = 0.2;
+      samplingMethod = 'tcd';
+      cfg = 1;
+      steps = 2;
+      width = 256;
+      height = 256;
+      seed = "-1";
+      strength = 0.5;
+      controlStrength = 0.9;
+      //_controlImageProcessingMode = 'Resize';
+      //_isDiffusionModelType = false;
     });
   }
   // --- End Copied Error Handling Logic ---
@@ -1188,55 +1188,6 @@ class _Img2ImgPageState extends State<Img2ImgPage>
               },
             ),
             ListTile(
-              leading: const Icon(LucideIcons.imageUpscale, size: 32),
-              title: const Text('Upscaler',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const UpscalerPage()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.aperture, size: 32),
-              title: const Text('Photomaker',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => const PhotomakerPage()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.draw, size: 32),
-              title: const Text('Scribble to Image',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ScribblePage()),
-                );
-              },
-            ),
-            ListTile(
               leading: const Icon(LucideIcons.palette, size: 32),
               title: const Text('Inpainting',
                   style: TextStyle(fontWeight: FontWeight.bold)),
@@ -1254,8 +1205,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
               },
             ),
             ListTile(
-              leading: const Icon(LucideIcons.expand, size: 32),
-              title: const Text('Outpainting',
+              leading: const Icon(LucideIcons.imageUpscale, size: 32),
+              title: const Text('Upscaler',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
                 if (_processor != null) {
@@ -1265,8 +1216,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                 Navigator.pop(context);
                 Navigator.pushReplacement(
                   context,
-                  MaterialPageRoute(
-                      builder: (context) => const OutpaintingPage()),
+                  MaterialPageRoute(builder: (context) => const UpscalerPage()),
                 );
               },
             ),
@@ -3380,8 +3330,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                   child: ShadSlider(
                     initialValue: cfg,
                     min: 1,
-                    max: 8,
-                    divisions: 70,
+                    max: 2,
+                    divisions: 20,
                     onChanged: (v) => setState(() => cfg = v),
                   ),
                 ),
@@ -3397,8 +3347,8 @@ class _Img2ImgPageState extends State<Img2ImgPage>
                   child: ShadSlider(
                     initialValue: steps.toDouble(),
                     min: 1,
-                    max: 12,
-                    divisions: 11,
+                    max: 4,
+                    divisions: 3,
                     onChanged: (v) => setState(() => steps = v.toInt()),
                   ),
                 ),
