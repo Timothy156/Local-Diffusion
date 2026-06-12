@@ -85,8 +85,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
   String _selectedBackend =
       FFIBindings.getCurrentBackend(); // Get initial backend
   final List<String> _availableBackends = [
-    'CPU',
-    'OpenCL'
+    'CPU'
   ]; // Available backends
 
   // --- State for Advanced Sampling Options (copied from main.dart) ---
