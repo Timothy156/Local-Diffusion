@@ -21,7 +21,7 @@ import 'package:image/image.dart' as img;
 import 'canny_processor.dart';
 import 'scribble2img_page.dart';
 import 'outpainting_page.dart';
-import 'image_processing_utils.dart'; // Import the new utility
+import 'image_processing_utils.dart';
 
 void main() {
   // Ensure Flutter bindings are initialized
@@ -1044,42 +1044,6 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
               },
             ),
             ListTile(
-              leading: const Icon(LucideIcons.imageUpscale, size: 32),
-              title: const Text('Upscaler', style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const UpscalerPage()));
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.aperture, size: 32),
-              title: const Text('Photomaker', style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const PhotomakerPage()));
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.draw, size: 32),
-              title: const Text('Scribble to Image', style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const ScribblePage()));
-              },
-            ),
-            ListTile(
               leading: const Icon(LucideIcons.palette, size: 32),
               title: const Text('Inpainting', style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
@@ -1092,15 +1056,15 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
               },
             ),
             ListTile(
-              leading: const Icon(LucideIcons.expand, size: 32),
-              title: const Text('Outpainting', style: TextStyle(fontWeight: FontWeight.bold)),
+              leading: const Icon(LucideIcons.imageUpscale, size: 32),
+              title: const Text('Upscaler', style: TextStyle(fontWeight: FontWeight.bold)),
               onTap: () {
                 if (_processor != null) {
                   _processor!.dispose();
                   _processor = null;
                 }
                 Navigator.pop(context);
-                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const OutpaintingPage()));
+                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const UpscalerPage()));
               },
             ),
           ],
@@ -2266,8 +2230,8 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   child: ShadSlider(
                     initialValue: cfg,
                     min: 1,
-                    max: 8,
-                    divisions: 70,
+                    max: 2,
+                    divisions: 20,
                     onChanged: (v) => setState(() => cfg = v),
                   ),
                 ),
@@ -2283,8 +2247,8 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
                   child: ShadSlider(
                     initialValue: steps.toDouble(),
                     min: 1,
-                    max: 12,
-                    divisions: 11,
+                    max: 4,
+                    divisions: 3,
                     onChanged: (v) => setState(() => steps = v.toInt()),
                   ),
                 ),
