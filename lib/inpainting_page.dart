@@ -6,6 +6,8 @@ import 'dart:developer' as developer;
 import 'dart:math' as math; // Import dart:math
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:path_provider/path_provider.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -170,6 +172,11 @@ class _InpaintingPageState extends State<InpaintingPage>
   // --- End state moved from ImageCropper ---
 
   String? _taesdPath;
+  // Bundled TAESD (SD1 only)
+  static const Map<String, String> _bundledTaesdAssets = {
+    'sd1': 'taesd_decoder.safetensors',
+  };
+  String? _bundledTaesdDir;
   String? _loraPath;
   String? _clipLPath;
   String? _clipGPath;
@@ -234,6 +241,8 @@ class _InpaintingPageState extends State<InpaintingPage>
         _cannyImage = Image.memory(bytes!.buffer.asUint8List());
       });
     });
+
+    _initBundledTaesd();
   }
 
   @override
@@ -579,7 +588,6 @@ class _InpaintingPageState extends State<InpaintingPage>
       // Clear all loaded component indicators
       loadedComponents.clear();
       // Reset all paths
-      _taesdPath = null;
       _loraPath = null;
       _clipLPath = null;
       _clipGPath = null;
@@ -587,8 +595,18 @@ class _InpaintingPageState extends State<InpaintingPage>
       _vaePath = null;
       _embedDirPath = null;
       _controlNetPath = null;
+      // Restore bundled TAESD for SD1 base setups, otherwise null it
+      if (_bundledTaesdDir != null) {
+        final assetName = _bundledTaesdAssets['sd1']!;
+        _taesdPath = '$_bundledTaesdDir/$assetName';
+        useTAESD = true;
+        loadedComponents['TAESD'] = true;
+        _taesdMessage = 'TAESD ready (bundled)';
+      } else {
+        _taesdPath = null;
+        useTAESD = false;
+      }
       // Reset related flags
-      useTAESD = false;
       useVAE = false;
       useVAETiling = false;
       useControlNet = false;
@@ -614,7 +632,6 @@ class _InpaintingPageState extends State<InpaintingPage>
       _controlHeight = null;
       _cannyImage = null;
       _message = ''; // Clear success messages too
-      _taesdMessage = '';
       _loraMessage = '';
       _taesdError = ''; // Clear TAESD specific errors
       _errorMessageTimer?.cancel();
@@ -650,6 +667,78 @@ class _InpaintingPageState extends State<InpaintingPage>
     });
   }
   // --- End Copied Error Handling Logic ---
+
+  Future<void> _initBundledTaesd() async {
+    try {
+      final appDir = await getApplicationSupportDirectory();
+      final taesdDir = Directory('${appDir.path}/taesd');
+      if (!await taesdDir.exists()) {
+        await taesdDir.create(recursive: true);
+      }
+
+      for (final entry in _bundledTaesdAssets.entries) {
+        final destFile = File('${taesdDir.path}/${entry.value}');
+        if (!await destFile.exists()) {
+          final byteData =
+              await rootBundle.load('assets/taesd/${entry.value}');
+          await destFile.writeAsBytes(
+            byteData.buffer
+                .asUint8List(byteData.offsetInBytes, byteData.lengthInBytes),
+            flush: true,
+          );
+          developer.log('Bundled TAESD extracted: ${entry.value}');
+        }
+      }
+
+      final defaultPath = '${taesdDir.path}/${_bundledTaesdAssets['sd1']!}';
+
+      if (mounted) {
+        setState(() {
+          _bundledTaesdDir = taesdDir.path;
+          _taesdPath = defaultPath;
+          useTAESD = true;
+          loadedComponents['TAESD'] = true;
+          _taesdMessage = 'TAESD ready (bundled)';
+        });
+      }
+    } catch (e) {
+      developer.log('Failed to extract bundled TAESD: $e');
+    }
+  }
+
+  void _switchTaesdVariant(String modelPath) {
+    if (_bundledTaesdDir == null) return;
+
+    final lower = modelPath.toLowerCase();
+
+    if (lower.contains('flux') ||
+        lower.contains('taef1') ||
+        lower.contains('f1_') ||
+        lower.contains('sd3') ||
+        lower.contains('stable-diffusion-3') ||
+        lower.contains('stable_diffusion_3') ||
+        lower.contains('xl') ||
+        lower.contains('sdxl')) {
+      setState(() {
+        _taesdPath = null;
+        useTAESD = false;
+        _taesdMessage = '';
+        loadedComponents.remove('TAESD');
+      });
+      developer.log('Non-SD1 model detected. TAESD disabled and removed from UI.');
+    } else {
+      final assetName = _bundledTaesdAssets['sd1']!;
+      final newPath = '$_bundledTaesdDir/$assetName';
+
+      setState(() {
+        _taesdPath = newPath;
+        useTAESD = true;
+        _taesdMessage = 'TAESD ready (bundled)';
+        loadedComponents['TAESD'] = true;
+      });
+      developer.log('SD1 model detected. TAESD enabled.');
+    }
+  }
 
   void showModelLoadDialog() {
     String selectedQuantization = 'NONE';
@@ -869,6 +958,7 @@ class _InpaintingPageState extends State<InpaintingPage>
 
                     if (selectedModel != null) {
                       setState(() => loadingText = 'Loading Model...');
+                      _switchTaesdVariant(selectedModel);
                       _initializeProcessor(
                         selectedModel,
                         useFlashAttention,
@@ -1389,158 +1479,22 @@ class _InpaintingPageState extends State<InpaintingPage>
               ],
             ),
             const SizedBox(height: 8),
-            Row(
-              children: [
-                ShadButton(
-                  enabled: !(isModelLoading || isGenerating),
-                  onPressed: () async {
-                    final modelDirPath = await getModelDirectory();
-                    final selectedDir = await FilePicker.platform
-                        .getDirectoryPath(initialDirectory: modelDirPath);
-
-                    if (selectedDir != null) {
-                      final directory = Directory(selectedDir);
-                      final files = directory.listSync();
-                      final taesdFiles = files
-                          .whereType<File>()
-                          .where((file) =>
-                              file.path.endsWith('.safetensors') ||
-                              file.path.endsWith('.bin'))
-                          .toList();
-
-                      if (taesdFiles.isNotEmpty) {
-                        final selectedTaesd = await showShadDialog<String>(
-                          context: context,
-                          builder: (BuildContext context) {
-                            return ShadDialog.alert(
-                              constraints: const BoxConstraints(maxWidth: 400),
-                              title: const Text('Select TAESD Model'),
-                              description: SizedBox(
-                                height: 300,
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: ShadTable.list(
-                                    header: const [
-                                      ShadTableCell.header(
-                                          child: Text('Model',
-                                              style: TextStyle(fontSize: 16))),
-                                      ShadTableCell.header(
-                                          alignment: Alignment.centerRight,
-                                          child: Text('Size',
-                                              style: TextStyle(fontSize: 16))),
-                                    ],
-                                    columnSpanExtent: (index) {
-                                      if (index == 0)
-                                        return const FixedTableSpanExtent(250);
-                                      if (index == 1)
-                                        return const FixedTableSpanExtent(80);
-                                      return null;
-                                    },
-                                    children: taesdFiles
-                                        .asMap()
-                                        .entries
-                                        .map((entry) => [
-                                              ShadTableCell(
-                                                child: GestureDetector(
-                                                  onTap: () => Navigator.pop(
-                                                      context,
-                                                      entry.value.path),
-                                                  child: Padding(
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                        vertical: 12.0),
-                                                    child: Text(
-                                                      entry.value.path
-                                                          .split('/')
-                                                          .last,
-                                                      style: const TextStyle(
-                                                          fontWeight:
-                                                              FontWeight.w500,
-                                                          fontSize: 14),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                              ShadTableCell(
-                                                alignment:
-                                                    Alignment.centerRight,
-                                                child: GestureDetector(
-                                                  onTap: () => Navigator.pop(
-                                                      context,
-                                                      entry.value.path),
-                                                  child: Text(
-                                                    '${(entry.value.lengthSync() / (1024 * 1024)).toStringAsFixed(1)} MB',
-                                                    style: const TextStyle(
-                                                        fontSize: 12),
-                                                  ),
-                                                ),
-                                              ),
-                                            ])
-                                        .toList(),
-                                  ),
-                                ),
-                              ),
-                              actions: [
-                                ShadButton.outline(
-                                  onPressed: () => Navigator.pop(context),
-                                  child: const Text('Cancel'),
-                                ),
-                              ],
-                            );
-                          },
-                        );
-
-                        if (selectedTaesd != null) {
-                          setState(() {
-                            _taesdPath = selectedTaesd;
-                            loadedComponents['TAESD'] = true;
-                            _taesdError = '';
-                            if (_processor != null) {
-                              String currentModelPath = _processor!.modelPath;
-                              bool currentFlashAttention =
-                                  _processor!.useFlashAttention;
-                              SDType currentModelType = _processor!.modelType;
-                              Schedule currentSchedule = _processor!.schedule;
-                              _initializeProcessor(
-                                currentModelPath,
-                                currentFlashAttention,
-                                currentModelType,
-                                currentSchedule,
-                              );
-                            }
-                          });
-                        }
-                      }
-                    }
-                  },
-                  child: const Text('Load TAESD'),
-                ),
-                const SizedBox(width: 8),
-                ShadCheckbox(
-                  value: useTAESD,
-                  onChanged: (bool v) {
-                    // Removed check: if (useVAETiling && v) { ... }
-                    setState(() {
-                      useTAESD = v;
-                      if (_processor != null) {
-                        String currentModelPath = _processor!.modelPath;
-                        bool currentFlashAttention =
-                            _processor!.useFlashAttention;
-                        SDType currentModelType = _processor!.modelType;
-                        Schedule currentSchedule = _processor!.schedule;
-                        _initializeProcessor(
-                          currentModelPath,
-                          currentFlashAttention,
-                          currentModelType,
-                          currentSchedule,
-                        );
-                      }
-                    });
-                  },
-                  label: const Text('Use TAESD'),
-                ),
-              ],
-            ),
+            if (useTAESD)
+              Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                  const SizedBox(width: 6),
+                  Text(
+                    _taesdMessage.isNotEmpty
+                        ? _taesdMessage
+                        : 'TAESD ready (bundled)',
+                    style: theme.textTheme.p.copyWith(
+                      color: Colors.green,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
             if (_taesdError.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(left: 8.0, top: 4.0),
