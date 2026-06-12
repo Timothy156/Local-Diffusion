@@ -354,49 +354,6 @@ class _UpscalerPageState extends State<UpscalerPage> {
                 },
               ),
               ListTile(
-                leading: const Icon(LucideIcons.imageUpscale, size: 32),
-                title: const Text(
-                  'Upscaler',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                tileColor: theme.colorScheme.secondary.withOpacity(0.2),
-                onTap: () => Navigator.pop(context),
-              ),
-              ListTile(
-                leading: const Icon(LucideIcons.aperture, size: 32),
-                title: const Text('Photomaker',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                onTap: () {
-                  if (_processor != null) {
-                    _processor!.dispose();
-                    _processor = null;
-                  }
-                  Navigator.pop(context);
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const PhotomakerPage()),
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.draw, size: 32),
-                title: const Text('Scribble to Image',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                onTap: () {
-                  if (_processor != null) {
-                    _processor!.dispose();
-                    _processor = null;
-                  }
-                  Navigator.pop(context);
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const ScribblePage()),
-                  );
-                },
-              ),
-              ListTile(
                 leading: const Icon(LucideIcons.palette, size: 32),
                 title: const Text('Inpainting',
                     style: TextStyle(fontWeight: FontWeight.bold)),
@@ -414,21 +371,13 @@ class _UpscalerPageState extends State<UpscalerPage> {
                 },
               ),
               ListTile(
-                leading: const Icon(LucideIcons.expand, size: 32),
-                title: const Text('Outpainting',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                onTap: () {
-                  if (_processor != null) {
-                    _processor!.dispose();
-                    _processor = null;
-                  }
-                  Navigator.pop(context);
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => const OutpaintingPage()),
-                  );
-                },
+                leading: const Icon(LucideIcons.imageUpscale, size: 32),
+                title: const Text(
+                  'Upscaler',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                tileColor: theme.colorScheme.secondary.withOpacity(0.2),
+                onTap: () => Navigator.pop(context),
               ),
             ],
           ),
