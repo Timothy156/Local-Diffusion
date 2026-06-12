@@ -3,9 +3,10 @@ import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:typed_data';
 import 'dart:developer' as developer;
-import 'dart:math' as math; // Import dart:math
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
@@ -13,17 +14,10 @@ import 'package:image/image.dart' as img;
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
-import 'canny_processor.dart';
 import 'ffi_bindings.dart';
 import 'img2img_processor.dart';
-import 'inpainting_page.dart';
-import 'outpainting_page.dart';
-import 'scribble2img_page.dart';
 import 'utils.dart';
-import 'main.dart';
-import 'upscaler_page.dart';
-import 'photomaker_page.dart';
-import 'image_processing_utils.dart'; // Import the image processing utils
+import 'stable_diffusion_service.dart';
 
 class Img2ImgPage extends StatefulWidget {
   const Img2ImgPage({super.key});
@@ -32,3701 +26,737 @@ class Img2ImgPage extends StatefulWidget {
   State<Img2ImgPage> createState() => _Img2ImgPageState();
 }
 
-class _Img2ImgPageState extends State<Img2ImgPage>
-    with SingleTickerProviderStateMixin {
-  final ScrollController _scrollController =
-      ScrollController(); // Add ScrollController
-  Timer? _modelErrorTimer;
-  Timer? _errorMessageTimer;
-  Img2ImgProcessor? _processor;
-  Image? _generatedImage;
-  bool isModelLoading = false;
-  bool isGenerating = false;
-  String _message = '';
-  String _loraMessage = '';
-  String _taesdMessage = '';
-  String _taesdError = '';
-  String _ramUsage = '';
-  String _progressMessage = '';
-  String _totalTime = '';
-  int _cores = 0;
-  List<String> _loraNames = [];
+class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStateMixin {
+  final ScrollController _scrollController = ScrollController();
+  
+  // Controllers for text specifications
   final TextEditingController _promptController = TextEditingController();
-  final Map<String, OverlayEntry?> _overlayEntries = {};
-  final GlobalKey _promptFieldKey = GlobalKey();
-  final Map<String, GlobalKey> _loraKeys = {};
-  bool useTAESD = false;
-  bool useVAETiling = false;
-  double clipSkip = 2; // Default to match main.dart
-  bool useVAE = false;
-  String samplingMethod = 'tcd';
-  double cfg = 1;
-  int steps = 2;
-  int width = 256;
-  int height = 256;
-  String seed = "-1";
-  String prompt = '';
-  String negativePrompt = '';
-  double progress = 0;
-  String status = '';
-  Map<String, bool> loadedComponents = {};
-  String loadingText = '';
-  String _loadingError = ''; // Consolidated error message
-  String _loadingErrorType = ''; // To track which component failed
-  Timer? _loadingErrorTimer; // Timer to clear the loading error
-  File? _inputImage;
-  Uint8List? _rgbBytes;
-  int? _inputWidth;
-  int? _inputHeight;
-  double strength = 0.5;
-  List<String> _generationLogs = []; // To store logs for the last generation
-  bool _showLogsButton = false; // To control visibility of the log button
-  bool _isDiffusionModelType = false; // Added state for the new switch
-  String _selectedBackend =
-      FFIBindings.getCurrentBackend(); // Get initial backend
-  final List<String> _availableBackends = [
-    'CPU'
-  ]; // Available backends
+  final TextEditingController _negativePromptController = TextEditingController();
+  final TextEditingController _seedController = TextEditingController(text: "-1");
+  final TextEditingController _skipLayersController = TextEditingController(text: "[7, 8, 9]");
 
-  // --- State for Advanced Sampling Options (copied from main.dart) ---
-  double eta = 0.0; // New state for eta slider
-  double guidance = 3.5; // Default to match main.dart
-  double slgScale = 0.0; // New state for slg-scale slider
-  String skipLayersText = ''; // New state for skip-layers text field
-  double skipLayerStart = 0.01; // New state for skip-layer-start slider
-  double skipLayerEnd = 0.2; // New state for skip-layer-end slider
-  final TextEditingController _skipLayersController =
-      TextEditingController(); // Controller for skip-layers input
-  String? _skipLayersErrorText; // Error text for skip-layers validation
-  // --- End State for Advanced Sampling Options ---
-  // bool _isDiffusionModelType = false; // Removed duplicate definition
+  // Image Processing State Data
+  Uint8List? _initImageBytes;
+  int? _initImageWidth;
+  int? _initImageHeight;
+  String? _initImageName;
 
-  // --- State for Cropping ---
-  int _maxCropWidth = 512; // Default, will be updated
-  int _maxCropHeight = 512; // Default, will be updated
-  // Use 'width' and 'height' state variables for current slider values
-  Rect _cropRect = Rect.zero; // Position relative to the displayed image widget
-  Size _imageDisplaySize = Size.zero; // Size of the image widget as displayed
-  final GlobalKey _imageKey = GlobalKey();
-  Offset _dragStartOffset = Offset.zero;
-  Rect _dragStartCropRect = Rect.zero;
-  bool _showCropUI = false; // Flag to control visibility of crop UI
-  // --- End State for Cropping ---
+  Uint8List? _controlImageBytes;
+  int? _controlImageWidth;
+  int? _controlImageHeight;
+  String? _controlImageName;
 
+  ui.Image? _generatedUiImage;
+  Image? _generatedWidgetImage;
+  String? _generationTime;
+
+  // Processing Context Properties
+  Img2ImgProcessor? _processor;
+  String? _modelPath;
+  bool _isModelLoaded = false;
+  bool _isGenerating = false;
+  double _progressValue = 0.0;
+  String _statusText = "Ready";
+  List<String> _generationLogs = [];
+
+  // Generation Settings Adjustments
+  double _denoisingStrength = 0.75;
+  double _cfgScale = 1.0;
+  double _guidanceScale = 3.5;
+  double _controlStrength = 0.9;
+  int _sampleSteps = 4;
+  int _clipSkip = 2;
+  int _outputWidth = 512;
+  int _outputHeight = 512;
+  
+  SDType _selectedModelType = SDType.NONE;
+  Schedule _selectedSchedule = Schedule.DEFAULT;
+  SampleMethod _selectedSampleMethod = SampleMethod.EULER;
+
+  bool _useFlashAttention = true;
+  bool _vaeTiling = false;
+  bool _isDiffusionModelType = false;
+
+  // Automatic TAESD Integration Parameters
+  String? _bundledTaesdDir;
   String? _taesdPath;
-  String? _loraPath;
-  String? _clipLPath;
-  String? _clipGPath;
-  String? _t5xxlPath;
-  String? _vaePath;
-  String? _embedDirPath;
-  String? _controlNetPath; // Add this
-  File? _controlImage; // Add this
-  Uint8List? _controlRgbBytes; // Add this
-  int? _controlWidth; // Add this
-  int? _controlHeight; // Add this
-  bool useControlNet = false; // Add this
-  bool useControlImage = false; // Add this
-  bool useCanny = false; // Add this
-  double controlStrength = 0.9;
-  CannyProcessor? _cannyProcessor;
-  bool isCannyProcessing = false;
-  Image? _cannyImage;
-  String _controlImageProcessingMode =
-      'Resize'; // 'Resize' or 'Crop' for ControlNet image
-  final List<String> samplingMethods = const [
-    'tcd',
-    'lcm'
-    'euler_a',
-    'euler',
-    'dpm2',
-    'dmp ++2s_a',
-    'dmp++2m',
-    'dpm++2mv2'
-  ];
-
-  void _showTemporaryError(String error) {
-    _errorMessageTimer?.cancel();
-    setState(() {
-      _taesdError = error;
-    });
-    _errorMessageTimer = Timer(const Duration(seconds: 10), () {
-      setState(() {
-        _taesdError = '';
-      });
-    });
-  }
-
-  // Restore getWidthOptions and getHeightOptions
-  List<int> getWidthOptions() {
-    List<int> opts = [];
-    // Generate options dynamically or use a fixed list if preferred
-    // Example: Multiples of 64 up to a reasonable limit like 1024
-    for (int i = 128; i <= 1024; i += 64) {
-      opts.add(i);
-    }
-    // Ensure the current _inputWidth is an option if available and cropping is off
-    if (!_showCropUI && _inputWidth != null && !opts.contains(_inputWidth!)) {
-      opts.add(_inputWidth!);
-      opts.sort();
-    }
-    return opts;
-  }
-
-  List<int> getHeightOptions() {
-    List<int> opts = [];
-    // Example: Multiples of 64 up to a reasonable limit like 1024
-    for (int i = 128; i <= 1024; i += 64) {
-      opts.add(i);
-    }
-    // Ensure the current _inputHeight is an option if available and cropping is off
-    if (!_showCropUI && _inputHeight != null && !opts.contains(_inputHeight!)) {
-      opts.add(_inputHeight!);
-      opts.sort();
-    }
-    return opts;
-  }
+  bool _useTAESD = false;
+  String _taesdMessage = 'TAESD searching...';
+  Map<String, bool> _loadedComponents = {};
+  
+  final Map<String, String> _bundledTaesdAssets = {
+    'sd1': 'taesd_decoder.safetensors',
+  };
 
   @override
   void initState() {
     super.initState();
-    _cores = FFIBindings.getCores() * 2;
-    _cannyProcessor = CannyProcessor();
-    _cannyProcessor!.init();
-
-    _cannyProcessor!.loadingStream.listen((loading) {
-      setState(() {
-        isCannyProcessing = loading;
-      });
-    });
-
-    _cannyProcessor!.imageStream.listen((image) async {
-      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-
-      setState(() {
-        _cannyImage = Image.memory(bytes!.buffer.asUint8List());
-      });
-    });
+    _initBundledTaesd();
   }
 
   @override
   void dispose() {
-    _errorMessageTimer?.cancel();
-    // _modelErrorTimer?.cancel(); // Removed as _modelError is removed
-    _loadingErrorTimer?.cancel(); // Cancel the general loading error timer
+    _promptController.dispose();
+    _negativePromptController.dispose();
+    _seedController.dispose();
+    _skipLayersController.dispose();
+    _scrollController.dispose();
     _processor?.dispose();
-    _processor = null;
-    _cannyProcessor?.dispose();
-    _promptController.dispose(); // Dispose text controller
-    _skipLayersController.dispose(); // Dispose the new controller
-    _scrollController.dispose(); // Dispose ScrollController
     super.dispose();
   }
 
-  Future<String> getModelDirectory() async {
-    final directory = Directory('/storage/emulated/0/Local Diffusion/Models');
-    if (!await directory.exists()) {
-      await directory.create(recursive: true);
-    }
-    return directory.path;
-  }
-
-  Uint8List _ensureRgbFormat(Uint8List bytes, int width, int height) {
-    // If the bytes length matches a 3-channel image, assume it's already in RGB format
-    if (bytes.length == width * height * 3) {
-      return bytes;
-    }
-
-    // If it's a grayscale image (1 channel)
-    if (bytes.length == width * height) {
-      final rgbBytes = Uint8List(width * height * 3);
-      for (int i = 0; i < width * height; i++) {
-        // Convert grayscale to RGB by duplicating the value to all channels
-        rgbBytes[i * 3] = bytes[i];
-        rgbBytes[i * 3 + 1] = bytes[i];
-        rgbBytes[i * 3 + 2] = bytes[i];
+  // Auto-loads the tiny autoencoder cleanly from application document streams
+  Future<void> _initBundledTaesd() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final assetName = _bundledTaesdAssets['sd1']!;
+      final targetPath = '${directory.path}/$assetName';
+      
+      if (await File(targetPath).exists()) {
+        setState(() {
+          _bundledTaesdDir = directory.path;
+          _taesdPath = targetPath;
+          _useTAESD = true;
+          _loadedComponents['TAESD'] = true;
+          _taesdMessage = 'TAESD auto-loaded (Bundled)';
+        });
+        developer.log("TAESD implicitly discovered and assigned: $_taesdPath");
+      } else {
+        setState(() {
+          _useTAESD = false;
+          _taesdMessage = 'TAESD file missing in application files';
+        });
+        developer.log("TAESD not found at expected environment path: $targetPath");
       }
-      return rgbBytes;
+    } catch (e) {
+      setState(() {
+        _useTAESD = false;
+        _taesdMessage = 'TAESD initialization error';
+      });
+      developer.log("Exception verifying bundled asset paths: $e");
     }
-
-    // If it's already in a different format, log the issue
-    print(
-        "Warning: Unexpected image format. Expected 1 or 3 channels, got: ${bytes.length / (width * height)} channels");
-
-    // As a fallback, try to interpret it as is
-    return bytes;
   }
 
-  Future<void> _processCannyImage() async {
-    if (_controlImage == null) return;
+  // Model selection execution routine
+  Future<void> _pickModel() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      dialogTitle: 'Select Stable Diffusion Model (.safetensors / .ckpt)',
+    );
 
-    final bytes = await _controlImage!.readAsBytes();
-    final decodedImage = img.decodeImage(bytes);
+    if (result != null && result.files.single.path != null) {
+      setState(() {
+        _modelPath = result.files.single.path;
+        _isModelLoaded = false;
+        _statusText = "Model selected. Click 'Load Model' to begin initialization.";
+      });
+    }
+  }
 
-    if (decodedImage == null) {
-      _showTemporaryError('Failed to decode image');
+  // Initialize the engine isolate structure
+  Future<void> _loadModel() async {
+    if (_modelPath == null) {
+      ShadToaster.of(context).show(
+        const ShadToast.destructive(
+          title: Text('Error'),
+          description: Text('Please pick a primary base model file first.'),
+        ),
+      );
       return;
     }
 
-    // Convert to RGB format (3 channels)
-    final rgbBytes = Uint8List(decodedImage.width * decodedImage.height * 3);
-    int rgbIndex = 0;
-
-    for (int y = 0; y < decodedImage.height; y++) {
-      for (int x = 0; x < decodedImage.width; x++) {
-        final pixel = decodedImage.getPixel(x, y);
-        rgbBytes[rgbIndex] = pixel.r.toInt();
-        rgbBytes[rgbIndex + 1] = pixel.g.toInt();
-        rgbBytes[rgbIndex + 2] = pixel.b.toInt();
-        rgbIndex += 3;
-      }
-    }
-
-    // Process with Canny
-    await _cannyProcessor!.processImage(
-      rgbBytes,
-      decodedImage.width,
-      decodedImage.height,
-      CannyParameters(
-        highThreshold: 100.0,
-        lowThreshold: 50.0,
-        weak: 1.0,
-        strong: 255.0,
-        inverse: false,
-      ),
-    );
-  }
-
-  void _initializeProcessor(String modelPath, bool useFlashAttention,
-      SDType modelType, Schedule schedule) {
     setState(() {
-      isModelLoading = true;
-      loadingText = 'Loading Model...';
+      _isGenerating = true;
+      _statusText = "Initializing context frameworks inside engine...";
+      _generationLogs.clear();
     });
+
     _processor?.dispose();
     _processor = Img2ImgProcessor(
-      modelPath: modelPath,
-      useFlashAttention: useFlashAttention,
-      modelType: modelType,
-      schedule: schedule,
-      loraPath: _loraPath,
-      taesdPath: _taesdPath,
-      useTinyAutoencoder: useTAESD,
-      clipLPath: _clipLPath,
-      clipGPath: _clipGPath,
-      t5xxlPath: _t5xxlPath,
-      vaePath: useVAE ? _vaePath : null, // Only pass VAE path if useVAE is true
-      embedDirPath: _embedDirPath,
-      clipSkip: clipSkip.toInt(),
-      vaeTiling: useVAETiling,
-      controlNetPath: _controlNetPath, // Add this
-      controlImageData: _controlRgbBytes, // Add this
-      controlImageWidth: _controlWidth, // Add this
-      controlImageHeight: _controlHeight, // Add this // Add this
-      controlStrength: controlStrength,
-      isDiffusionModelType: _isDiffusionModelType, // Pass the state variable
-      // isDiffusionModelType: _isDiffusionModelType, // Removed duplicate argument
-      onModelLoaded: () {
-        setState(() {
-          isModelLoading = false;
-          _message = 'Model initialized successfully';
-          loadedComponents['Model'] = true;
-          loadingText = '';
-          _loadingError = ''; // Clear any previous loading errors on success
-          _loadingErrorType = '';
-          _loadingErrorTimer?.cancel();
-        });
-      },
-      onLog: (log) {
-        // Handle RAM usage log
-        if (log.message.contains('total params memory size')) {
-          final regex = RegExp(r'total params memory size = ([\d.]+)MB');
-          final match = regex.firstMatch(log.message);
-          if (match != null) {
-            setState(() {
-              _ramUsage = 'Total RAM: ${match.group(1)}MB';
-            });
-          }
-        }
-
-        // Check for error messages passed via the log stream
-        if (log.level == -1 && log.message.startsWith("Error (")) {
-          final errorMatch =
-              RegExp(r'Error \((.*?)\): (.*)').firstMatch(log.message);
-          if (errorMatch != null) {
-            final errorType = errorMatch.group(1)!;
-            final errorMessage = errorMatch.group(2)!;
-            _handleLoadingError(errorType, errorMessage); // Use the new handler
-          }
-        } else {
-          // Log other messages normally
-          developer.log(log.message);
-        }
-      },
-      onProgress: (progress) {
-        setState(() {
-          this.progress = progress.progress;
-          status =
-              'Generating image... ${(progress.progress * 100).toInt()}% • Step ${progress.step}/${progress.totalSteps} • ${progress.time.toStringAsFixed(1)}s';
-        });
-      },
+      modelPath: _modelPath!,
+      useFlashAttention: _useFlashAttention,
+      modelType: _selectedModelType,
+      schedule: _selectedSchedule,
+      taesdPath: _useTAESD ? _taesdPath : null,
+      useTinyAutoencoder: _useTAESD,
+      isDiffusionModelType: _isDiffusionModelType,
+      vaeTiling: _vaeTiling,
+      clipSkip: _clipSkip,
     );
 
-    // Listen for the collected logs after generation
+    // Bind log listeners to interface arrays
     _processor!.logListStream.listen((logs) {
-      setState(() {
-        _generationLogs = logs;
-      });
+      setState(() => _generationLogs = logs);
     });
 
-    _processor!.generationResultStream.listen((result) async {
-      // Use new stream
-      final ui.Image image = result['image']; // Extract image from map
-      final String? generationTime =
-          result['generationTime']; // Extract time from map
-
-      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
-
-      setState(() {
-        isGenerating = false;
-        _generatedImage = Image.memory(bytes!.buffer.asUint8List());
-        // Update status using the extracted time
-        status = generationTime != null
-            ? 'Generation completed in $generationTime'
-            : 'Generation complete';
-        _showLogsButton = true; // Show the log button
-      });
-
-      // Save the extracted image
-      await _processor!.saveGeneratedImage(
-        image,
-        prompt,
-        width,
-        height,
-        SampleMethod.values.firstWhere(
-          (method) =>
-              method.displayName.toLowerCase() == samplingMethod.toLowerCase(),
-          orElse: () => SampleMethod.EULER_A,
-        ),
-      );
-
-      // No need for the redundant status update here
-    });
-  }
-
-  // --- Copied Error Handling Logic from main.dart ---
-  // New method to handle loading errors centrally
-  void _handleLoadingError(String errorType, String errorMessage) {
-    _loadingErrorTimer?.cancel(); // Cancel previous timer if any
-
-    // Call the central reset function
-    _resetState(); // Call the new reset function
-
-    // Set the specific error message for loading failure
-    setState(() {
-      _loadingError = errorMessage; // Display the specific error
-      _loadingErrorType = errorType; // Store error type if needed elsewhere
-
-      // Handle generation-specific errors separately if needed
-      if (errorType == 'generationError') {
-        status = 'Generation failed: $errorMessage';
-        isGenerating = false; // Stop generation indicator
-      } else if (errorType == 'inputError') {
-        // Keep status potentially, just show the error message
-        status = ''; // Or clear status for input errors too? Let's clear it.
-        progress = 0;
-      } else {
-        // For loading errors, clear status too
-        status = '';
-        progress = 0;
+    _processor!.generationResultStream.listen((result) {
+      final ui.Image? rawImg = result['image'];
+      final String? timeTaken = result['generationTime'];
+      if (rawImg != null) {
+        _convertUiImageToWidget(rawImg, timeTaken);
       }
-
-      // Clear the error message after a delay
-      _loadingErrorTimer = Timer(const Duration(seconds: 10), () {
-        if (mounted) {
-          // Check if the widget is still in the tree
-          setState(() {
-            _loadingError = '';
-            _loadingErrorType = '';
-          });
-        }
-      });
     });
-  }
 
-  // Central function to reset the state (adapted for Img2ImgPage)
-  void _resetState() {
-    _processor?.dispose(); // Dispose the processor if it exists
-
+    // Simulated complete fallback context (Isolate feedback updates via log hooks automatically)
+    await Future.delayed(const Duration(seconds: 2));
     setState(() {
-      _processor = null; // Set processor to null
-      isModelLoading = false; // Stop loading indicator
-      isGenerating = false; // Stop generation indicator
-      loadingText = ''; // Clear loading text
-      _loadingError = ''; // Clear loading error
-      _loadingErrorType = '';
-      _loadingErrorTimer?.cancel(); // Cancel timer if active
-
-      // Clear all loaded component indicators
-      loadedComponents.clear();
-      // Reset all paths
-      _taesdPath = null;
-      _loraPath = null;
-      _clipLPath = null;
-      _clipGPath = null;
-      _t5xxlPath = null;
-      _vaePath = null;
-      _embedDirPath = null;
-      _controlNetPath = null;
-      // Reset related flags
-      useTAESD = false;
-      useVAE = false;
-      useVAETiling = false;
-      useControlNet = false;
-      useControlImage = false;
-      useCanny = false;
-      // Reset other related state specific to img2img
-      _loraNames = [];
-      _ramUsage = ''; // Clear RAM usage display
-      _inputImage = null; // Reset input image
-      _rgbBytes = null;
-      _inputWidth = null;
-      _inputHeight = null;
-      _showCropUI = false; // Hide crop UI
-      _cropRect = Rect.zero;
-      _imageDisplaySize = Size.zero;
-      _controlImage = null;
-      _controlRgbBytes = null;
-      _controlWidth = null;
-      _controlHeight = null;
-      _cannyImage = null;
-      _message = ''; // Clear success messages too
-      _taesdMessage = '';
-      _loraMessage = '';
-      _taesdError = ''; // Clear TAESD specific errors
-      _errorMessageTimer?.cancel();
-      status = ''; // Clear generation status
-      progress = 0; // Reset progress
-      _generatedImage = null; // Clear generated image
-      _generationLogs = []; // Clear logs
-      _showLogsButton = false; // Hide log button
-
-      // Reset UI elements (optional, but good practice)
-      _promptController.clear();
-      prompt = '';
-      negativePrompt = '';
-      // Reset advanced options to defaults if needed
-      clipSkip = 2;
-      eta = 0.0;
-      guidance = 3.5;
-      slgScale = 0.0;
-      skipLayersText = '';
-      _skipLayersController.clear();
-      skipLayerStart = 0.01;
-      skipLayerEnd = 0.2;
-      samplingMethod = 'tcd';
-      cfg = 1;
-      steps = 2;
-      width = 256;
-      height = 256;
-      seed = "-1";
-      strength = 0.5;
-      controlStrength = 0.9;
-      //_controlImageProcessingMode = 'Resize';
-      //_isDiffusionModelType = false;
+      _isModelLoaded = true;
+      _isGenerating = false;
+      _statusText = "Model context initialized successfully.";
     });
   }
-  // --- End Copied Error Handling Logic ---
 
-  void showModelLoadDialog() {
-    String selectedQuantization = 'NONE';
-    String selectedSchedule = 'EXPONENTIAL';
-    bool useFlashAttention = true;
-    String? flashAttentionError; // Added state for error message
+  // Image upload handling routines
+  Future<void> _pickInitialImage(ImageSource source) async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: source);
 
-    final List<String> quantizationOptions = [
-      'NONE',
-      'Q8_0',
-      'Q8_1',
-      'Q8_K',
-      'Q6_K',
-      'Q5_0',
-      'Q5_1',
-      'Q5_K',
-      'Q4_0',
-      'Q4_1',
-      'Q4_K',
-      'Q3_K',
-      'Q2_K'
-    ];
+    if (pickedFile != null) {
+      final bytes = await pickedFile.readAsBytes();
+      final decoded = img.decodeImage(bytes);
+      if (decoded != null) {
+        // Adjust resolution dimensions to enforce alignment to multiples of 8
+        final processedWidth = (decoded.width ~/ 8) * 8;
+        final processedHeight = (decoded.height ~/ 8) * 8;
 
-    final List<String> scheduleOptions = [
-      'EXPONENTIAL',
-      'DEFAULT',
-      'DISCRETE',
-      'KARRAS',
-      'AYS'
-    ];
-
-    showShadDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => ShadDialog.alert(
-          constraints: const BoxConstraints(maxWidth: 300),
-          title: const Text('Load Model Settings'),
-          description: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Text('Quantization Type:'),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ShadSelect<String>(
-                      placeholder: Text(selectedQuantization),
-                      onChanged: (value) => setState(
-                          () => selectedQuantization = value ?? 'NONE'),
-                      options: quantizationOptions
-                          .map((type) =>
-                              ShadOption(value: type, child: Text(type)))
-                          .toList(),
-                      selectedOptionBuilder: (context, value) => Text(value),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  const Text('Schedule:'),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ShadSelect<String>(
-                      placeholder: Text(selectedSchedule),
-                      onChanged: (value) =>
-                          setState(() => selectedSchedule = value ?? 'DEFAULT'),
-                      options: scheduleOptions
-                          .map((schedule) => ShadOption(
-                              value: schedule, child: Text(schedule)))
-                          .toList(),
-                      selectedOptionBuilder: (context, value) => Text(value),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              ShadSwitch(
-                value: useFlashAttention,
-                onChanged: (v) {
-                  // Check backend and desired state
-                  if (_selectedBackend != 'CPU' && v) {
-                    // Trying to enable on non-CPU backend
-                    setState(() {
-                      flashAttentionError =
-                          'Flash Attention is supported only on CPU';
-                      // Do NOT set useFlashAttention = true
-                    });
-                  } else {
-                    // Either CPU backend or turning the switch off
-                    setState(() {
-                      useFlashAttention = v;
-                      flashAttentionError = null; // Clear error if any
-                    });
-                  }
-                },
-                label: const Text('Use Flash Attention'),
-              ),
-              // Display error message if it exists
-              if (flashAttentionError != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: Text(
-                    flashAttentionError!,
-                    style: TextStyle(
-                      color: ShadTheme.of(context)
-                          .colorScheme
-                          .destructive, // Use theme's destructive color
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          actions: [
-            ShadButton.outline(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            ShadButton(
-              enabled: !(isModelLoading || isGenerating),
-              onPressed: () async {
-                final modelDirPath = await getModelDirectory();
-                final selectedDir = await FilePicker.platform
-                    .getDirectoryPath(initialDirectory: modelDirPath);
-
-                if (selectedDir != null) {
-                  final directory = Directory(selectedDir);
-                  final files = directory.listSync();
-                  final modelFiles = files
-                      .whereType<File>()
-                      .where((file) =>
-                          file.path.endsWith('.safetensors') ||
-                          file.path.endsWith('.ckpt') ||
-                          file.path.endsWith('.gguf'))
-                      .toList();
-
-                  if (modelFiles.isNotEmpty) {
-                    final selectedModel = await showShadDialog<String>(
-                      context: context,
-                      builder: (BuildContext context) {
-                        return ShadDialog.alert(
-                          constraints: const BoxConstraints(maxWidth: 400),
-                          title: const Text('Select Model'),
-                          description: SizedBox(
-                            height: 300,
-                            child: Material(
-                              color: Colors.transparent,
-                              child: ShadTable.list(
-                                header: const [
-                                  ShadTableCell.header(
-                                      child: Text('Model',
-                                          style: TextStyle(fontSize: 16))),
-                                  ShadTableCell.header(
-                                      alignment: Alignment.centerRight,
-                                      child: Text('Size',
-                                          style: TextStyle(fontSize: 16))),
-                                ],
-                                columnSpanExtent: (index) {
-                                  if (index == 0)
-                                    return const FixedTableSpanExtent(250);
-                                  if (index == 1)
-                                    return const FixedTableSpanExtent(80);
-                                  return null;
-                                },
-                                children: modelFiles
-                                    .asMap()
-                                    .entries
-                                    .map((entry) => [
-                                          ShadTableCell(
-                                            child: GestureDetector(
-                                              onTap: () => Navigator.pop(
-                                                  context, entry.value.path),
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        vertical: 12.0),
-                                                child: Text(
-                                                  entry.value.path
-                                                      .split('/')
-                                                      .last,
-                                                  style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.w500,
-                                                      fontSize: 14),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                          ShadTableCell(
-                                            alignment: Alignment.centerRight,
-                                            child: GestureDetector(
-                                              onTap: () => Navigator.pop(
-                                                  context, entry.value.path),
-                                              child: Text(
-                                                '${(entry.value.lengthSync() / (1024 * 1024)).toStringAsFixed(1)} MB',
-                                                style: const TextStyle(
-                                                    fontSize: 12),
-                                              ),
-                                            ),
-                                          ),
-                                        ])
-                                    .toList(),
-                              ),
-                            ),
-                          ),
-                          actions: [
-                            ShadButton.outline(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Cancel'),
-                            ),
-                          ],
-                        );
-                      },
-                    );
-
-                    if (selectedModel != null) {
-                      setState(() => loadingText = 'Loading Model...');
-                      _initializeProcessor(
-                        selectedModel,
-                        useFlashAttention,
-                        SDType.values.firstWhere(
-                          (type) => type.displayName == selectedQuantization,
-                          orElse: () => SDType.NONE,
-                        ),
-                        Schedule.values.firstWhere(
-                          (s) => s.displayName == selectedSchedule,
-                          orElse: () => Schedule.DISCRETE,
-                        ),
-                      );
-                    }
-                  }
-                }
-                Navigator.of(context).pop();
-              },
-              child: const Text('Load Model'),
-            ),
-          ],
-        ),
-      ),
-    );
+        setState(() {
+          _initImageBytes = bytes;
+          _initImageWidth = processedWidth;
+          _initImageHeight = processedHeight;
+          _initImageName = pickedFile.name;
+          _outputWidth = processedWidth;
+          _outputHeight = processedHeight;
+        });
+      }
+    }
   }
 
-  Future<void> _pickImage() async {
+  Future<void> _pickControlImage() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
 
     if (pickedFile != null) {
       final bytes = await pickedFile.readAsBytes();
-      final decodedImage = img.decodeImage(bytes);
-
-      if (decodedImage == null) {
-        _showTemporaryError('Failed to decode image');
-        return;
+      final decoded = img.decodeImage(bytes);
+      if (decoded != null) {
+        setState(() {
+          _controlImageBytes = bytes;
+          _controlImageWidth = (decoded.width ~/ 8) * 8;
+          _controlImageHeight = (decoded.height ~/ 8) * 8;
+          _controlImageName = pickedFile.name;
+        });
       }
+    }
+  }
 
-      final rgbBytes = Uint8List(decodedImage.width * decodedImage.height * 3);
-      int rgbIndex = 0;
-
-      for (int y = 0; y < decodedImage.height; y++) {
-        for (int x = 0; x < decodedImage.width; x++) {
-          final pixel = decodedImage.getPixel(x, y);
-          rgbBytes[rgbIndex] = pixel.r.toInt();
-          rgbBytes[rgbIndex + 1] = pixel.g.toInt();
-          rgbBytes[rgbIndex + 2] = pixel.b.toInt();
-          rgbIndex += 3;
-        }
-      }
-
+  // Convert raw UI pipeline formats to high level widget wrappers
+  Future<void> _convertUiImageToWidget(ui.Image image, String? timeTaken) async {
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    if (byteData != null) {
       setState(() {
-        _inputImage = File(pickedFile.path);
-        _rgbBytes = rgbBytes;
-        _inputWidth = decodedImage.width;
-        _inputHeight = decodedImage.height;
-        // width = _inputWidth!; // Don't set width/height directly here anymore
-        // height = _inputHeight!; // Use cropping logic below
-
-        // --- Initialize Cropping State ---
-        _maxCropWidth = largestMultipleOf64(_inputWidth!);
-        _maxCropHeight = largestMultipleOf64(_inputHeight!);
-
-        // Reset width/height sliders to default/initial aspect ratio
-        double initialAspectRatio = _inputWidth! / _inputHeight!;
-        int initialCropW, initialCropH;
-        if (initialAspectRatio >= 1) {
-          // Wider or square
-          initialCropW = math.min(512, _maxCropWidth);
-          initialCropH =
-              largestMultipleOf64((initialCropW / initialAspectRatio).round());
-          initialCropH = math.min(initialCropH, _maxCropHeight);
-          initialCropW =
-              largestMultipleOf64((initialCropH * initialAspectRatio).round());
-          initialCropW = math.min(initialCropW, _maxCropWidth);
-        } else {
-          // Taller
-          initialCropH = math.min(512, _maxCropHeight);
-          initialCropW =
-              largestMultipleOf64((initialCropH * initialAspectRatio).round());
-          initialCropW = math.min(initialCropW, _maxCropWidth);
-          initialCropH =
-              largestMultipleOf64((initialCropW / initialAspectRatio).round());
-          initialCropH = math.min(initialCropH, _maxCropHeight);
-        }
-        // Ensure minimum size
-        width = math.max(64, initialCropW); // Use 'width' state for slider
-        height = math.max(64, initialCropH); // Use 'height' state for slider
-
-        _showCropUI = true; // Show the cropping UI now
-        _cropRect = Rect.zero; // Reset crop rect position
-        _imageDisplaySize = Size.zero; // Reset display size
-
-        // Calculate initial crop rect after the frame renders
-        WidgetsBinding.instance.addPostFrameCallback(_calculateInitialCropRect);
-        // --- End Initialize Cropping State ---
-      });
-    } else {
-      // If user cancels image picking, hide crop UI
-      setState(() {
-        _showCropUI = false;
+        _generatedUiImage = image;
+        _generatedWidgetImage = Image.memory(byteData.buffer.asUint8List());
+        _generationTime = timeTaken;
+        _isGenerating = false;
+        _progressValue = 1.0;
+        _statusText = "Processing Completed ${timeTaken ?? ''}";
       });
     }
   }
 
-  // --- Cropping Logic (copied from inpainting_page.dart) ---
-
-  void _calculateInitialCropRect(_) {
-    if (!mounted) return;
-    final RenderBox? imageBox =
-        _imageKey.currentContext?.findRenderObject() as RenderBox?;
-    if (imageBox != null && imageBox.hasSize) {
-      setState(() {
-        _imageDisplaySize = imageBox.size;
-        _updateCropRect(center: true); // Center the initial crop rect
-      });
-    } else {
-      // Retry if the size wasn't available yet
-      WidgetsBinding.instance.addPostFrameCallback(_calculateInitialCropRect);
-    }
-  }
-
-  // Updates the _cropRect based on current dimensions and optionally centers it
-  void _updateCropRect({bool center = false}) {
-    if (_imageDisplaySize == Size.zero) return; // Not ready yet
-
-    // Use the current 'width' and 'height' state variables for crop dimensions
-    double currentCropWidth = width.toDouble();
-    double currentCropHeight = height.toDouble();
-
-    double displayAspect = _imageDisplaySize.width / _imageDisplaySize.height;
-    double cropAspect = currentCropWidth / currentCropHeight;
-
-    double rectWidth, rectHeight;
-
-    // Calculate the dimensions of the crop rectangle within the image display bounds
-    if (displayAspect > cropAspect) {
-      // Image display is wider than crop aspect ratio
-      rectHeight = _imageDisplaySize.height;
-      rectWidth = rectHeight * cropAspect;
-    } else {
-      // Image display is taller or same aspect ratio
-      rectWidth = _imageDisplaySize.width;
-      rectHeight = rectWidth / cropAspect;
+  // Dispatch prompt context variables into the processing frame execution loops
+  Future<void> _startGeneration() async {
+    if (_processor == null || !_isModelLoaded) {
+      ShadToaster.of(context).show(
+        const ShadToast.destructive(
+          title: Text('Execution Halted'),
+          description: Text('Ensure engine processing models are fully compiled before synthesis.'),
+        ),
+      );
+      return;
     }
 
-    double left, top;
-
-    if (center || _cropRect == Rect.zero) {
-      // Center if first time or explicitly requested
-      left = (_imageDisplaySize.width - rectWidth) / 2;
-      top = (_imageDisplaySize.height - rectHeight) / 2;
-    } else {
-      // Keep the current center if possible, otherwise clamp to bounds
-      double currentCenterX = _cropRect.left + _cropRect.width / 2;
-      double currentCenterY = _cropRect.top + _cropRect.height / 2;
-
-      left = currentCenterX - rectWidth / 2;
-      top = currentCenterY - rectHeight / 2;
+    if (_initImageBytes == null) {
+      ShadToaster.of(context).show(
+        const ShadToast.destructive(
+          title: Text('Missing Parameter'),
+          description: Text('Image-to-Image execution loops require an initial guiding source image.'),
+        ),
+      );
+      return;
     }
 
-    // Clamp the rectangle to the image bounds
-    left = left.clamp(0.0, _imageDisplaySize.width - rectWidth);
-    top = top.clamp(0.0, _imageDisplaySize.height - rectHeight);
-
-    // Only update state if the rect actually changes to avoid infinite loops
-    Rect newRect = Rect.fromLTWH(left, top, rectWidth, rectHeight);
-    if (newRect != _cropRect) {
-      setState(() {
-        _cropRect = newRect;
-      });
-    }
-  }
-
-  void _onPanStart(DragStartDetails details) {
-    if (_cropRect.contains(details.localPosition)) {
-      _dragStartOffset = details.localPosition;
-      _dragStartCropRect = _cropRect;
-    } else {
-      _dragStartOffset = Offset.zero; // Indicate drag didn't start inside
-    }
-  }
-
-  void _onPanUpdate(DragUpdateDetails details) {
-    if (_dragStartOffset == Offset.zero) return; // Drag didn't start inside
-
-    final Offset delta = details.localPosition - _dragStartOffset;
-    double newLeft = _dragStartCropRect.left + delta.dx;
-    double newTop = _dragStartCropRect.top + delta.dy;
-
-    // Clamp movement within the image bounds
-    newLeft = newLeft.clamp(0.0, _imageDisplaySize.width - _cropRect.width);
-    newTop = newTop.clamp(0.0, _imageDisplaySize.height - _cropRect.height);
+    int seedValue = int.tryParse(_seedController.text) ?? -1;
 
     setState(() {
-      _cropRect =
-          Rect.fromLTWH(newLeft, newTop, _cropRect.width, _cropRect.height);
+      _isGenerating = true;
+      _progressValue = 0.0;
+      _statusText = "Analyzing initial graphics context tensors...";
+      _generatedWidgetImage = null;
+      _generatedUiImage = null;
     });
-  }
 
-  // Performs the actual cropping based on current state
-  // Returns null if cropping is not active or fails
-  Future<CroppedImageData?> _getCroppedImageData() async {
-    // Only crop if the UI is shown and we have an input image
-    if (!_showCropUI ||
-        _inputImage == null ||
-        _inputWidth == null ||
-        _inputHeight == null) {
-      return null;
+    // Prepare processing components directly out of standard formats
+    final rawInputImage = img.decodeImage(_initImageBytes!);
+    Uint8List rgbInitData = _initImageBytes!;
+    if (rawInputImage != null) {
+      rgbInitData = Uint8List.fromList(img.encodeJpg(rawInputImage));
     }
-    // Ensure display size is calculated
-    if (_imageDisplaySize == Size.zero) {
-      print("Warning: Image display size not calculated yet. Cannot crop.");
-      // Attempt to calculate it now, might delay generation slightly
-      final RenderBox? imageBox =
-          _imageKey.currentContext?.findRenderObject() as RenderBox?;
-      if (imageBox != null && imageBox.hasSize) {
-        _imageDisplaySize = imageBox.size;
-      } else {
-        _showTemporaryError('Cannot determine image size for cropping.');
-        return null; // Still can't get size
+
+    Uint8List? rgbControlData;
+    if (_controlImageBytes != null) {
+      final rawControlImage = img.decodeImage(_controlImageBytes!);
+      if (rawControlImage != null) {
+        rgbControlData = Uint8List.fromList(img.encodeJpg(rawControlImage));
       }
     }
-    // Ensure crop rect is valid
-    if (_cropRect == Rect.zero ||
-        _cropRect.width <= 0 ||
-        _cropRect.height <= 0) {
-      print("Warning: Invalid crop rectangle: $_cropRect");
-      _showTemporaryError('Invalid crop area selected.');
-      return null;
-    }
 
-    // 1. Read original image bytes
-    final Uint8List imageBytes = await _inputImage!.readAsBytes();
-    final img.Image? originalImage = img.decodeImage(imageBytes);
+    // Connect to callbacks
+    _processor!.onProgress = (progress) {
+      setState(() {
+        _progressValue = progress.step / progress.steps;
+        _statusText = "Sampling Step ${progress.step}/${progress.steps} (${progress.time.toStringAsFixed(1)}s)";
+      });
+    };
 
-    if (originalImage == null) {
-      print("Error: Could not decode image for cropping.");
-      _showTemporaryError('Error decoding image for cropping');
-      return null;
-    }
-
-    // 2. Calculate the source crop rectangle in original image coordinates
-    final double scaleX = originalImage.width / _imageDisplaySize.width;
-    final double scaleY = originalImage.height / _imageDisplaySize.height;
-
-    final int srcX =
-        (_cropRect.left * scaleX).round().clamp(0, originalImage.width);
-    final int srcY =
-        (_cropRect.top * scaleY).round().clamp(0, originalImage.height);
-    // Clamp width/height to ensure they don't exceed bounds from srcX/srcY
-    final int srcWidth = (_cropRect.width * scaleX)
-        .round()
-        .clamp(1, originalImage.width - srcX); // Ensure at least 1 pixel
-    final int srcHeight = (_cropRect.height * scaleY)
-        .round()
-        .clamp(1, originalImage.height - srcY); // Ensure at least 1 pixel
-
-    // Double check dimensions after clamping
-    if (srcWidth <= 0 || srcHeight <= 0) {
-      print(
-          "Error: Calculated crop dimensions are invalid after clamping ($srcWidth x $srcHeight).");
-      _showTemporaryError('Invalid crop area calculation.');
-      return null;
-    }
-
-    // 3. Crop the image using img.copyCrop
-    final img.Image croppedImage = img.copyCrop(
-      originalImage,
-      x: srcX,
-      y: srcY,
-      width: srcWidth,
-      height: srcHeight,
-    );
-
-    // 4. Resize the cropped image to the target 'width' and 'height' (from sliders)
-    final img.Image resizedImage = img.copyResize(
-      croppedImage,
-      width: width, // Use state variable 'width'
-      height: height, // Use state variable 'height'
-      interpolation: img.Interpolation.nearest,
-    );
-
-    // 5. Encode the resized image back to Uint8List (RGB format)
-    final Uint8List finalImageBytes = Uint8List(width * height * 3);
-    int rgbIndex = 0;
-    try {
-      for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-          final pixel = resizedImage.getPixel(x, y);
-          finalImageBytes[rgbIndex++] = pixel.r.toInt();
-          finalImageBytes[rgbIndex++] = pixel.g.toInt();
-          finalImageBytes[rgbIndex++] = pixel.b.toInt();
-        }
-      }
-    } catch (e) {
-      print("Error converting resized image to RGB bytes: $e");
-      _showTemporaryError('Error processing final image.');
-      return null;
-    }
-
-    // 6. Return the data (maskBytes is null for img2img)
-    return CroppedImageData(
-      imageBytes: finalImageBytes, // Return raw RGB bytes
-      maskBytes: null, // No mask in img2img cropping
-      width: width, // Final width from slider
-      height: height, // Final height from slider
+    await _processor!.generateImage(
+      prompt: _promptController.text.isNotEmpty ? _promptController.text : "Detailed masterpiece digital art",
+      negativePrompt: _negativePromptController.text,
+      initImageData: rgbInitData,
+      initImageWidth: _initImageWidth!,
+      initImageHeight: _initImageHeight!,
+      strength: _denoisingStrength,
+      cfgScale: _cfgScale,
+      guidance: _guidanceScale,
+      width: _outputWidth,
+      height: _outputHeight,
+      sampleMethod: _selectedSampleMethod.index,
+      sampleSteps: _sampleSteps,
+      seed: seedValue,
+      clipSkip: _clipSkip,
+      controlImageData: rgbControlData,
+      controlImageWidth: _controlImageWidth,
+      controlImageHeight: _controlImageHeight,
+      controlStrength: _controlStrength,
+      skipLayersText: _skipLayersController.text,
     );
   }
 
-  // --- End Cropping Logic ---
+  // Save functionality mapping down into hardware modules
+  Future<void> _saveOutput() async {
+    if (_generatedUiImage == null || _processor == null) return;
+    
+    final resultMessage = await _processor!.saveGeneratedImage(
+      _generatedUiImage!,
+      _promptController.text,
+      _outputWidth,
+      _outputHeight,
+      _selectedSampleMethod,
+    );
+
+    ShadToaster.of(context).show(
+      ShadToast(
+        title: const Text('Export Action'),
+        description: Text(resultMessage),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
+    
     return Scaffold(
-      // Disable drawer drag gesture when loading or generating
-      drawerEnableOpenDragGesture: !(isModelLoading || isGenerating),
       appBar: AppBar(
-        // Explicitly add the leading menu button to control its state
-        leading: Builder(
-          builder: (context) => IconButton(
-            icon: const Icon(Icons.menu),
-            // Disable the button when loading or generating
-            onPressed: (isModelLoading || isGenerating)
-                ? null
-                : () => Scaffold.of(context).openDrawer(),
-            tooltip: MaterialLocalizations.of(context).openAppDrawerTooltip,
-          ),
-        ),
-        title: const Text('Image to Image',
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('Image-to-Image Vector Studio'),
         backgroundColor: theme.colorScheme.background,
         elevation: 0,
-        actions: [
-          // Add Unload button only if a model is loaded
-          if (_processor != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 8.0),
-              child: Tooltip(
-                message: 'Unload Model & Reset',
-                child: ShadButton.ghost(
-                  icon: const Icon(
-                    LucideIcons.powerOff,
-                    size: 20,
-                  ),
-                  onPressed: (isModelLoading || isGenerating)
-                      ? null // Disable if loading or generating
-                      : () {
-                          // Show confirmation dialog
-                          showShadDialog(
-                            context: context,
-                            builder: (context) => ShadDialog.alert(
-                              title: const Text('Confirm Unload'),
-                              description: const Text(
-                                  'Are you sure you want to unload the current model and reset all settings?'),
-                              actions: [
-                                ShadButton.outline(
-                                  onPressed: () => Navigator.of(context).pop(),
-                                  child: const Text('Cancel'),
+      ),
+      body: SafeArea(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Configurations Sidebar Panel Controls
+            Expanded(
+              flex: 4,
+              child: SingleChildScrollView(
+                controller: _scrollController,
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // System Hardware Model Loading Section Card
+                    ShadCard(
+                      title: const Text('Model Architecture Configuration'),
+                      description: Text('Active Module: ${_modelPath != null ? _modelPath!.split('/').last : "None Provided"}'),
+                      content: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ShadButton.outline(
+                                  onPressed: _pickModel,
+                                  child: const Text('Pick Base Model File'),
                                 ),
-                                ShadButton.destructive(
-                                  onPressed: () {
-                                    Navigator.of(context).pop(); // Close dialog
-                                    _resetState(); // Call the reset function
-                                  },
-                                  child: const Text('Confirm Unload'),
+                              ),
+                              const SizedBox(width: 8),
+                              ShadButton(
+                                onPressed: _modelPath != null && !_isGenerating ? _loadModel : null,
+                                child: const Text('Load Model'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          // Automatic status feedback showing bundled state tracking configurations
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.muted,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _useTAESD ? Icons.offline_bolt : Icons.warning_amber_rounded,
+                                  color: _useTAESD ? Colors.green : Colors.amber,
+                                  size: 18,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    _taesdMessage,
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                                  ),
                                 ),
                               ],
                             ),
-                          );
-                        },
-                ),
-              ),
-            ),
-        ],
-      ),
-      drawer: Drawer(
-        width: 240,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.horizontal(right: Radius.circular(4)),
-        ),
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
-            const DrawerHeader(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color.fromRGBO(24, 89, 38, 1),
-                    Color.fromARGB(255, 59, 128, 160),
-                    Color(0xFF0a2335),
+                          ),
+                          const SizedBox(height: 12),
+                          ShadCheckbox(
+                            value: _isDiffusionModelType,
+                            onChanged: (v) => setState(() => _isDiffusionModelType = v),
+                            label: const Text('Use Isolated Diffusion Layer Path (Unbundled)'),
+                          ),
+                          ShadCheckbox(
+                            value: _useFlashAttention,
+                            onChanged: (v) => setState(() => _useFlashAttention = v),
+                            label: const Text('Enable Flash Attention Pipelines'),
+                          ),
+                          ShadCheckbox(
+                            value: _vaeTiling,
+                            onChanged: (v) => setState(() => _vaeTiling = v),
+                            label: const Text('Enable VAE Tiling (Reduces High VRAM Peaks)'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Inputs Selection UI Mapping Elements
+                    ShadCard(
+                      title: const Text('Input Layer Transformations'),
+                      content: Column(
+                        children: [
+                          const SizedBox(height: 8),
+                          // Source Guiding Array Asset Selection Layout
+                          if (_initImageBytes != null) ...[
+                            Stack(
+                              alignment: 'topRight' as Alignment,
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.memory(_initImageBytes!, height: 180, fit: BoxFit.cover),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.cancel, color: Colors.red),
+                                  onPressed: () => setState(() {
+                                    _initImageBytes = null;
+                                    _initImageName = null;
+                                  }),
+                                )
+                              ],
+                            ),
+                          ] else ...[
+                            DottedBorder(
+                              color: theme.colorScheme.border,
+                              borderType: BorderType.RRect,
+                              radius: const Radius.circular(8),
+                              child: Container(
+                                height: 120,
+                                width: double.infinity,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Text('Upload Initial Image Input'),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        ShadButton.outline(
+                                          onPressed: () => _pickInitialImage(ImageSource.gallery),
+                                          size: ShadButtonSize.sm,
+                                          child: const Text('Gallery'),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        ShadButton.outline(
+                                          onPressed: () => _pickInitialImage(ImageSource.camera),
+                                          size: ShadButtonSize.sm,
+                                          child: const Text('Camera'),
+                                        ),
+                                      ],
+                                    )
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 16),
+
+                          // ControlNet Secondary Overlay Setup Layout
+                          if (_controlImageBytes != null) ...[
+                            Stack(
+                              alignment: 'topRight' as Alignment,
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.memory(_controlImageBytes!, height: 140, fit: BoxFit.cover),
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.cancel, color: Colors.red),
+                                  onPressed: () => setState(() {
+                                    _controlImageBytes = null;
+                                    _controlImageName = null;
+                                  }),
+                                )
+                              ],
+                            ),
+                          ] else ...[
+                            ShadButton.outline(
+                              onPressed: _pickControlImage,
+                              width: double.infinity,
+                              child: const Text('Add Optional ControlNet Guidance Mask'),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Prompt Parameters Tuning Panels
+                    ShadCard(
+                      title: const Text('Hyperparameter Matrix Tuners'),
+                      content: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 8),
+                          const Text('Positive Prompt Guidance'),
+                          ShadInput(
+                            controller: _promptController,
+                            placeholder: const Text('Enter descriptive prompt matrices...'),
+                            maxLines: 3,
+                          ),
+                          const SizedBox(height: 12),
+                          const Text('Negative Prompt Matrices'),
+                          ShadInput(
+                            controller: _negativePromptController,
+                            placeholder: const Text('Elements to extract/omit out from latent fields...'),
+                            maxLines: 2,
+                          ),
+                          const SizedBox(height: 16),
+                          
+                          // Denoising Strength Configuration Multipliers
+                          Text('Denoising Strength Variance Factor: ${_denoisingStrength.toStringAsFixed(2)}'),
+                          ShadSlider(
+                            value: _denoisingStrength,
+                            min: 0.0,
+                            max: 1.0,
+                            onChanged: (v) => setState(() => _denoisingStrength = v),
+                          ),
+                          const SizedBox(height: 12),
+
+                          Text('CFG Guidance Scaling Parameters: ${_cfgScale.toStringAsFixed(1)}'),
+                          ShadSlider(
+                            value: _cfgScale,
+                            min: 1.0,
+                            max: 20.0,
+                            onChanged: (v) => setState(() => _cfgScale = v),
+                          ),
+                          const SizedBox(height: 12),
+
+                          Text('Step Synthesis Iterations: $_sampleSteps'),
+                          ShadSlider(
+                            value: _sampleSteps.toDouble(),
+                            min: 1,
+                            max: 50,
+                            onChanged: (v) => setState(() => _sampleSteps = v.toInt()),
+                          ),
+                          const SizedBox(height: 12),
+
+                          if (_controlImageBytes != null) ...[
+                            Text('ControlNet Weight Factor: ${_controlStrength.toStringAsFixed(2)}'),
+                            ShadSlider(
+                              value: _controlStrength,
+                              min: 0.0,
+                              max: 2.0,
+                              onChanged: (v) => setState(() => _controlStrength = v),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+
+                          const Text('Generation Structural Seed Value'),
+                          ShadInput(
+                            controller: _seedController,
+                            placeholder: const Text('-1 loops for absolute randomness'),
+                          ),
+                          const SizedBox(height: 12),
+
+                          const Text('Advanced Transformer Layer Skipping Map'),
+                          ShadInput(
+                            controller: _skipLayersController,
+                            placeholder: const Text('[7, 8, 9] (Defaults inside SDXL layers)'),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
-              child: Text(
-                'Menu',
-                style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold),
-              ),
             ),
-            ListTile(
-              leading: const Icon(LucideIcons.type, size: 32),
-              title: const Text('Text to Image',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => const StableDiffusionApp()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.images, size: 32),
-              title: const Text('Image to Image',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              tileColor: theme.colorScheme.secondary.withOpacity(0.2),
-              onTap: () {
-                Navigator.pop(context);
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.palette, size: 32),
-              title: const Text('Inpainting',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => const InpaintingPage()),
-                );
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.imageUpscale, size: 32),
-              title: const Text('Upscaler',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              onTap: () {
-                if (_processor != null) {
-                  _processor!.dispose();
-                  _processor = null;
-                }
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const UpscalerPage()),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-      body: SingleChildScrollView(
-        controller: _scrollController, // Attach ScrollController
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Display Loading Status / Success / Error Messages (Copied from main.dart)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Display Loading Error FIRST if present
-                  if (_loadingError.isNotEmpty)
-                    Text.rich(
-                      TextSpan(
-                        children: [
-                          const WidgetSpan(
-                            child: Icon(
-                              Icons.error_outline, // Error Icon
-                              size: 20,
-                              color: Colors.red,
-                            ),
-                            alignment: PlaceholderAlignment.middle,
-                          ),
-                          const WidgetSpan(child: SizedBox(width: 6)),
-                          TextSpan(
-                            text: _loadingError, // Display the error message
-                            style: theme.textTheme.p.copyWith(
-                              color: Colors.red,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                        .animate()
-                        .fadeIn(duration: const Duration(milliseconds: 300))
-                        .shake(hz: 4, offset: const Offset(2, 0)), // Use offset
-                  // Display Success Messages ONLY if NO loading error is active
-                  if (_loadingError.isEmpty)
-                    ...loadedComponents.entries.map((entry) => Text.rich(
-                          TextSpan(
-                            children: [
-                              TextSpan(
-                                text: '${entry.key} loaded ',
-                                style: theme.textTheme.p.copyWith(
-                                  color: Colors.green,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const WidgetSpan(
-                                child: Icon(
-                                  Icons.check_circle_outline, // Check Icon
-                                  size: 20,
-                                  color: Colors.green,
-                                ),
-                                alignment: PlaceholderAlignment.middle,
-                              ),
-                            ],
-                          ),
-                        )
-                            .animate()
-                            .fadeIn(duration: const Duration(milliseconds: 500))
-                            .slideY(begin: -0.2, end: 0)),
-                  // Display Loading Text if loading and NO error
-                  if (loadingText.isNotEmpty && _loadingError.isEmpty)
-                    const SizedBox(height: 8),
-                  if (loadingText.isNotEmpty && _loadingError.isEmpty)
-                    LoadingDotsAnimation(
-                      // Use the custom widget from main.dart
-                      loadingText: loadingText,
-                      style: theme.textTheme.p.copyWith(
-                        color: Colors.orange,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ).animate().fadeIn(), // Keep the fade-in animation
-                ],
-              ),
-            ),
-            // --- Backend Selection Row ---
-            Row(
-              children: [
-                const Text('Backend:'),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ShadSelect<String>(
-                    placeholder: Text(_selectedBackend),
-                    enabled: !(isModelLoading ||
-                        isGenerating), // Disable during loading/generation
-                    options: _availableBackends
-                        .map((backend) => ShadOption(
-                              value: backend,
-                              child: Text(backend),
-                            ))
-                        .toList(),
-                    selectedOptionBuilder: (context, value) => Text(value),
-                    onChanged: (String? newBackend) {
-                      if (newBackend != null &&
-                          newBackend != _selectedBackend) {
-                        if (_processor != null) {
-                          // Show confirmation dialog
-                          showShadDialog(
-                            context: context,
-                            builder: (context) => ShadDialog.alert(
-                              title: const Text('Change Backend?'),
-                              description: const Text(
-                                  'Changing the backend requires unloading the current model and resetting settings. Proceed?'),
-                              actions: [
-                                ShadButton.outline(
-                                  onPressed: () => Navigator.of(context).pop(),
-                                  child: const Text('Cancel'),
-                                ),
-                                ShadButton.destructive(
-                                  onPressed: () {
-                                    Navigator.of(context).pop(); // Close dialog
-                                    print(
-                                        "Img2Img: Backend changed with model loaded. Resetting state.");
-                                    _resetState(); // Reset state first
-                                    print(
-                                        "Img2Img: Initializing FFI bindings for: $newBackend");
-                                    FFIBindings.initializeBindings(
-                                        newBackend); // Re-init FFI
-                                    setState(() {
-                                      _selectedBackend = newBackend;
-                                      _cores = FFIBindings.getCores() *
-                                          2; // Re-fetch cores
-                                    });
-                                    print(
-                                        "Img2Img: Backend changed to: $_selectedBackend");
-                                  },
-                                  child: const Text('Confirm Change'),
-                                ),
-                              ],
-                            ),
-                          );
-                        } else {
-                          // No model loaded, just change the backend
-                          print(
-                              "Img2Img: Initializing FFI bindings for: $newBackend");
-                          FFIBindings.initializeBindings(
-                              newBackend); // Re-init FFI
-                          setState(() {
-                            _selectedBackend = newBackend;
-                            _cores =
-                                FFIBindings.getCores() * 2; // Re-fetch cores
-                          });
-                          print(
-                              "Img2Img: Backend changed to: $_selectedBackend");
-                        }
-                      }
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16), // Spacing after backend dropdown
-            // --- Model Loading Row ---
-            Row(
-              children: [
-                ShadButton(
-                  enabled: !(isModelLoading || isGenerating),
-                  onPressed: showModelLoadDialog,
-                  child: const Text('Load Model'),
-                ),
-                const SizedBox(width: 8),
-                if (_ramUsage.isNotEmpty)
-                  Text(_ramUsage, style: theme.textTheme.p),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                ShadButton(
-                  enabled: !(isModelLoading || isGenerating),
-                  onPressed: () async {
-                    final modelDirPath = await getModelDirectory();
-                    final selectedDir = await FilePicker.platform
-                        .getDirectoryPath(initialDirectory: modelDirPath);
 
-                    if (selectedDir != null) {
-                      final directory = Directory(selectedDir);
-                      final files = directory.listSync();
-                      final taesdFiles = files
-                          .whereType<File>()
-                          .where((file) =>
-                              file.path.endsWith('.safetensors') ||
-                              file.path.endsWith('.bin'))
-                          .toList();
-
-                      if (taesdFiles.isNotEmpty) {
-                        final selectedTaesd = await showShadDialog<String>(
-                          context: context,
-                          builder: (BuildContext context) {
-                            return ShadDialog.alert(
-                              constraints: const BoxConstraints(maxWidth: 400),
-                              title: const Text('Select TAESD Model'),
-                              description: SizedBox(
-                                height: 300,
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: ShadTable.list(
-                                    header: const [
-                                      ShadTableCell.header(
-                                          child: Text('Model',
-                                              style: TextStyle(fontSize: 16))),
-                                      ShadTableCell.header(
-                                          alignment: Alignment.centerRight,
-                                          child: Text('Size',
-                                              style: TextStyle(fontSize: 16))),
-                                    ],
-                                    columnSpanExtent: (index) {
-                                      if (index == 0)
-                                        return const FixedTableSpanExtent(250);
-                                      if (index == 1)
-                                        return const FixedTableSpanExtent(80);
-                                      return null;
-                                    },
-                                    children: taesdFiles
-                                        .asMap()
-                                        .entries
-                                        .map((entry) => [
-                                              ShadTableCell(
-                                                child: GestureDetector(
-                                                  onTap: () => Navigator.pop(
-                                                      context,
-                                                      entry.value.path),
-                                                  child: Padding(
-                                                    padding: const EdgeInsets
-                                                        .symmetric(
-                                                        vertical: 12.0),
-                                                    child: Text(
-                                                      entry.value.path
-                                                          .split('/')
-                                                          .last,
-                                                      style: const TextStyle(
-                                                          fontWeight:
-                                                              FontWeight.w500,
-                                                          fontSize: 14),
-                                                    ),
-                                                  ),
-                                                ),
-                                              ),
-                                              ShadTableCell(
-                                                alignment:
-                                                    Alignment.centerRight,
-                                                child: GestureDetector(
-                                                  onTap: () => Navigator.pop(
-                                                      context,
-                                                      entry.value.path),
-                                                  child: Text(
-                                                    '${(entry.value.lengthSync() / (1024 * 1024)).toStringAsFixed(1)} MB',
-                                                    style: const TextStyle(
-                                                        fontSize: 12),
-                                                  ),
-                                                ),
-                                              ),
-                                            ])
-                                        .toList(),
-                                  ),
-                                ),
-                              ),
-                              actions: [
-                                ShadButton.outline(
-                                  onPressed: () => Navigator.pop(context),
-                                  child: const Text('Cancel'),
-                                ),
-                              ],
-                            );
-                          },
-                        );
-
-                        if (selectedTaesd != null) {
-                          setState(() {
-                            _taesdPath = selectedTaesd;
-                            loadedComponents['TAESD'] = true;
-                            _taesdError = '';
-                            if (_processor != null) {
-                              String currentModelPath = _processor!.modelPath;
-                              bool currentFlashAttention =
-                                  _processor!.useFlashAttention;
-                              SDType currentModelType = _processor!.modelType;
-                              Schedule currentSchedule = _processor!.schedule;
-                              _initializeProcessor(
-                                currentModelPath,
-                                currentFlashAttention,
-                                currentModelType,
-                                currentSchedule,
-                              );
-                            }
-                          });
-                        }
-                      }
-                    }
-                  },
-                  child: const Text('Load TAESD'),
-                ),
-                const SizedBox(width: 8),
-                ShadCheckbox(
-                  value: useTAESD,
-                  onChanged: (bool v) {
-                    // Removed check: if (useVAETiling && v) { ... }
-                    setState(() {
-                      useTAESD = v;
-                      if (_processor != null) {
-                        String currentModelPath = _processor!.modelPath;
-                        bool currentFlashAttention =
-                            _processor!.useFlashAttention;
-                        SDType currentModelType = _processor!.modelType;
-                        Schedule currentSchedule = _processor!.schedule;
-                        _initializeProcessor(
-                          currentModelPath,
-                          currentFlashAttention,
-                          currentModelType,
-                          currentSchedule,
-                        );
-                      }
-                    });
-                  },
-                  label: const Text('Use TAESD'),
-                ),
-              ],
-            ),
-            if (_taesdError.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(left: 8.0, top: 4.0),
-                child: Text(
-                  _taesdError,
-                  style: theme.textTheme.p.copyWith(
-                    color: Colors.red,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            const SizedBox(height: 16),
-            GestureDetector(
-              onTap: (isModelLoading || isGenerating) ? null : _pickImage,
-              child: DottedBorder(
-                borderType: BorderType.RRect,
-                radius: const Radius.circular(8),
-                color: theme.colorScheme.primary.withOpacity(0.5),
-                strokeWidth: 2,
-                dashPattern: const [8, 4],
-                child: AspectRatio(
-                  // Maintain aspect ratio of the original image
-                  aspectRatio: (_inputWidth != null &&
-                          _inputHeight != null &&
-                          _inputHeight! > 0)
-                      ? _inputWidth! / _inputHeight!
-                      : 1.0, // Default aspect ratio if no image
-                  child: Container(
-                    // Removed color: Colors.grey[300]
-                    child: _inputImage == null
-                        ? Center(
-                            // Center the placeholder
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.add_photo_alternate,
-                                  size: 64,
-                                  color: theme.colorScheme.primary
-                                      .withOpacity(0.5),
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  'Load image',
-                                  style: TextStyle(
-                                      color: theme.colorScheme.primary
-                                          .withOpacity(0.5),
-                                      fontSize: 16),
-                                ),
-                              ],
-                            ),
-                          )
-                        : LayoutBuilder(
-                            // Use LayoutBuilder for display size
-                            builder: (context, constraints) {
-                              // Update display size post-frame
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (mounted &&
-                                    _imageDisplaySize != constraints.biggest) {
-                                  // Use setState only if size actually changed
-                                  if (_imageDisplaySize !=
-                                      constraints.biggest) {
-                                    setState(() {
-                                      _imageDisplaySize = constraints.biggest;
-                                      _updateCropRect(); // Recalculate rect
-                                    });
-                                  }
-                                }
-                              });
-
-                              return GestureDetector(
-                                onPanStart: _showCropUI ? _onPanStart : null,
-                                onPanUpdate: _showCropUI ? _onPanUpdate : null,
-                                child: Stack(
-                                  fit: StackFit.expand,
+            // Canvas Output Visualizer Real-time Dashboard Panel
+            VerticalDivider(width: 1, color: theme.colorScheme.border),
+            Expanded(
+              flex: 5,
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.muted.withOpacity(0.4),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: theme.colorScheme.border),
+                        ),
+                        child: Center(
+                          child: _generatedWidgetImage != null
+                              ? Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    // Image
-                                    Image.file(
-                                      _inputImage!,
-                                      key: _imageKey, // Assign key here
-                                      fit: BoxFit.contain,
+                                    Expanded(
+                                      child: ClipRRect(
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: InteractiveViewer(
+                                          child: _generatedWidgetImage!,
+                                        ),
+                                      ),
                                     ),
-                                    // Cropping Frame Overlay (only if cropping)
-                                    if (_showCropUI && _cropRect != Rect.zero)
-                                      Positioned.fromRect(
-                                        rect: _cropRect,
-                                        child: Container(
-                                          decoration: BoxDecoration(
-                                            border: Border.all(
-                                              color:
-                                                  Colors.white.withOpacity(0.8),
-                                              width: 2,
-                                            ),
+                                    const SizedBox(height: 12),
+                                    Row(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        ShadButton(
+                                          onPressed: _saveOutput,
+                                          icon: const Icon(Icons.save_alt, size: 16),
+                                          child: const Text('Export Image to Device Studio'),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 12),
+                                  ],
+                                )
+                              : _isGenerating
+                                  ? Padding(
+                                      padding: const EdgeInsets.all(24.0),
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          const CircularProgressIndicator(),
+                                          const SizedBox(height: 20),
+                                          LinearProgressIndicator(
+                                            value: _progressValue,
+                                            backgroundColor: theme.colorScheme.border,
+                                            color: theme.colorScheme.primary,
                                           ),
+                                          const SizedBox(height: 12),
+                                          Text(_statusText, style: const TextStyle(fontWeight: FontWeight.w600)),
+                                        ],
+                                      ),
+                                    )
+                                  : Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Icon(Icons.brush_outlined, size: 64, color: theme.colorScheme.border),
+                                        const SizedBox(height: 16),
+                                        const Text(
+                                          'Awaiting Target Execution Settings',
+                                          style: TextStyle(fontWeight: FontWeight.w500, fontSize: 16),
                                         ),
-                                      ),
-                                    // Dimming outside the crop area (only if cropping)
-                                    if (_showCropUI && _cropRect != Rect.zero)
-                                      ClipPath(
-                                        clipper: InvertedRectClipper(
-                                            clipRect: _cropRect),
-                                        child: Container(
-                                          color: Colors.black.withOpacity(0.5),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'Configure parameters on the sidebar layout and dispatch the generator',
+                                          style: TextStyle(color: theme.colorScheme.mutedForeground, fontSize: 13),
                                         ),
-                                      ),
-                                  ],
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ),
-              ),
-            ),
-            // --- Sliders for Cropping ---
-            if (_showCropUI) ...[
-              const SizedBox(height: 16),
-              Text('Crop Width: $width px'),
-              ShadSlider(
-                min: 64,
-                max: _maxCropWidth.toDouble(),
-                divisions: (_maxCropWidth > 64)
-                    ? (_maxCropWidth - 64) ~/ 64
-                    : 1, // Avoid division by zero
-                initialValue: width.toDouble(),
-                onChanged: (value) {
-                  int newWidth = largestMultipleOf64(value.round());
-                  if (newWidth != width) {
-                    setState(() {
-                      width = newWidth;
-                      double aspect = width / height.toDouble();
-                      height = largestMultipleOf64((width / aspect).round());
-                      height = height.clamp(64, _maxCropHeight);
-                      width = largestMultipleOf64((height * aspect).round());
-                      width = width.clamp(64, _maxCropWidth);
-                      _updateCropRect();
-                    });
-                  }
-                },
-              ),
-              const SizedBox(height: 10),
-              Text('Crop Height: $height px'),
-              ShadSlider(
-                min: 64,
-                max: _maxCropHeight.toDouble(),
-                divisions: (_maxCropHeight > 64)
-                    ? (_maxCropHeight - 64) ~/ 64
-                    : 1, // Avoid division by zero
-                initialValue: height.toDouble(),
-                onChanged: (value) {
-                  int newHeight = largestMultipleOf64(value.round());
-                  if (newHeight != height) {
-                    setState(() {
-                      height = newHeight;
-                      double aspect = width.toDouble() / height;
-                      width = largestMultipleOf64((height * aspect).round());
-                      width = width.clamp(64, _maxCropWidth);
-                      height = largestMultipleOf64((width / aspect).round());
-                      height = height.clamp(64, _maxCropHeight);
-                      _updateCropRect();
-                    });
-                  }
-                },
-              ),
-              const SizedBox(height: 16), // Spacing after sliders
-            ],
-            // --- End Sliders ---
-            const SizedBox(height: 16),
-            // --- Advanced Model Options Accordion ---
-            ShadAccordion<Map<String, dynamic>>(
-              children: [
-                ShadAccordionItem<Map<String, dynamic>>(
-                  value: const {}, // Unique value for this item
-                  title: const Text('Advanced Model Options'),
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // --- PASTED CONTENT START ---
-                        // Standalone Model Switch (Cut from here)
-                        // Padding(...)
-                        Row(
-                          children: [
-                            SizedBox(
-                              width: 120,
-                              child: ShadButton(
-                                enabled: !(isModelLoading || isGenerating),
-                                onPressed: () async {
-                                  final modelDirPath =
-                                      await getModelDirectory();
-                                  final selectedDir = await FilePicker.platform
-                                      .getDirectoryPath(
-                                          initialDirectory: modelDirPath);
-
-                                  if (selectedDir != null) {
-                                    final directory = Directory(selectedDir);
-                                    final files = directory.listSync();
-                                    final loraFiles = files
-                                        .whereType<File>()
-                                        .where((file) =>
-                                            file.path
-                                                .endsWith('.safetensors') ||
-                                            file.path.endsWith('.pt') ||
-                                            file.path.endsWith('.ckpt') ||
-                                            file.path.endsWith('.bin') ||
-                                            file.path.endsWith('.pth'))
-                                        .toList();
-
-                                    setState(() {
-                                      _loraPath = selectedDir;
-                                      loadedComponents['LORA'] = true;
-                                      _loraNames = loraFiles
-                                          .map((file) => file.path
-                                              .split('/')
-                                              .last
-                                              .split('.')
-                                              .first)
-                                          .toList();
-                                      if (_processor != null) {
-                                        String currentModelPath =
-                                            _processor!.modelPath;
-                                        bool currentFlashAttention =
-                                            _processor!.useFlashAttention;
-                                        SDType currentModelType =
-                                            _processor!.modelType;
-                                        Schedule currentSchedule =
-                                            _processor!.schedule;
-                                        _initializeProcessor(
-                                          currentModelPath,
-                                          currentFlashAttention,
-                                          currentModelType,
-                                          currentSchedule,
-                                        );
-                                      }
-                                    });
-                                  }
-                                },
-                                child: const Text('Load Lora'),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Wrap(
-                                spacing: 8,
-                                runSpacing: 4,
-                                children: _loraNames.map((name) {
-                                  _loraKeys[name] ??= GlobalKey();
-                                  return InkWell(
-                                    key: _loraKeys[name],
-                                    onTap: () {
-                                      final loraTag = "<lora:$name:0.7>";
-                                      final RenderBox clickedItem =
-                                          _loraKeys[name]!
-                                              .currentContext!
-                                              .findRenderObject() as RenderBox;
-                                      final Offset startPosition = clickedItem
-                                          .localToGlobal(Offset.zero);
-                                      final RenderBox promptField =
-                                          _promptFieldKey.currentContext!
-                                              .findRenderObject() as RenderBox;
-                                      final Offset targetPosition = promptField
-                                          .localToGlobal(Offset.zero);
-                                      late final OverlayEntry entry;
-                                      entry = OverlayEntry(
-                                        builder: (context) => Stack(
-                                          children: [
-                                            TweenAnimationBuilder<double>(
-                                              duration: const Duration(
-                                                  milliseconds: 500),
-                                              curve: Curves.easeInOut,
-                                              tween:
-                                                  Tween(begin: 0.0, end: 1.0),
-                                              onEnd: () {
-                                                setState(() {
-                                                  prompt = prompt.isEmpty
-                                                      ? loraTag
-                                                      : "$prompt $loraTag";
-                                                  _promptController.text =
-                                                      prompt;
-                                                  _promptController.selection =
-                                                      TextSelection
-                                                          .fromPosition(
-                                                    TextPosition(
-                                                        offset:
-                                                            _promptController
-                                                                .text.length),
-                                                  );
-                                                });
-                                                entry.remove();
-                                              },
-                                              builder: (context, value, child) {
-                                                return Positioned(
-                                                  left: startPosition.dx,
-                                                  top: startPosition.dy +
-                                                      (targetPosition.dy -
-                                                              startPosition
-                                                                  .dy) *
-                                                          value,
-                                                  child: Opacity(
-                                                    opacity: 1 - (value * 0.2),
-                                                    child: Material(
-                                                      color: Colors.transparent,
-                                                      child: Text(
-                                                        loraTag,
-                                                        style:
-                                                            theme.textTheme.p,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                );
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      );
-                                      Overlay.of(context).insert(entry);
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                          horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: theme.colorScheme.primary
-                                            .withOpacity(0.1),
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: Text(
-                                        name,
-                                        style: theme.textTheme.p
-                                            .copyWith(fontSize: 13),
-                                      ),
+                                      ],
                                     ),
-                                  );
-                                }).toList(),
-                              ),
-                            ),
-                          ],
                         ),
-                        // Standalone Model Switch (Pasted here)
-                        Padding(
-                          padding: const EdgeInsets.only(
-                              top: 8.0,
-                              bottom: 16.0), // Adjust padding as needed
-                          child: ShadSwitch(
-                            value: _isDiffusionModelType,
-                            onChanged: (v) =>
-                                setState(() => _isDiffusionModelType = v),
-                            label: const Text('Standalone Model'),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ShadButton(
-                                enabled: !(isModelLoading || isGenerating),
-                                onPressed: () async {
-                                  final modelDirPath =
-                                      await getModelDirectory();
-                                  final selectedDir = await FilePicker.platform
-                                      .getDirectoryPath(
-                                          initialDirectory: modelDirPath);
-
-                                  if (selectedDir != null) {
-                                    final directory = Directory(selectedDir);
-                                    final files = directory.listSync();
-                                    final clipFiles = files
-                                        .whereType<File>()
-                                        .where((file) =>
-                                            file.path
-                                                .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin') ||
-                                            file.path.endsWith(
-                                                '.gguf')) // Added .gguf
-                                        .toList();
-
-                                    if (clipFiles.isNotEmpty) {
-                                      final selectedClip =
-                                          await showShadDialog<String>(
-                                        context: context,
-                                        builder: (BuildContext context) {
-                                          return ShadDialog.alert(
-                                            constraints: const BoxConstraints(
-                                                maxWidth: 400),
-                                            title: const Text('Select Clip_L'),
-                                            description: SizedBox(
-                                              height: 300,
-                                              child: Material(
-                                                color: Colors.transparent,
-                                                child: ShadTable.list(
-                                                  header: const [
-                                                    ShadTableCell.header(
-                                                        child: Text('Model',
-                                                            style: TextStyle(
-                                                                fontSize: 16))),
-                                                    ShadTableCell.header(
-                                                        alignment: Alignment
-                                                            .centerRight,
-                                                        child: Text('Size',
-                                                            style: TextStyle(
-                                                                fontSize: 16))),
-                                                  ],
-                                                  columnSpanExtent: (index) {
-                                                    if (index == 0)
-                                                      return const FixedTableSpanExtent(
-                                                          250);
-                                                    if (index == 1)
-                                                      return const FixedTableSpanExtent(
-                                                          80);
-                                                    return null;
-                                                  },
-                                                  children: clipFiles
-                                                      .asMap()
-                                                      .entries
-                                                      .map((entry) => [
-                                                            ShadTableCell(
-                                                              child:
-                                                                  GestureDetector(
-                                                                onTap: () =>
-                                                                    Navigator.pop(
-                                                                        context,
-                                                                        entry
-                                                                            .value
-                                                                            .path),
-                                                                child: Padding(
-                                                                  padding: const EdgeInsets
-                                                                      .symmetric(
-                                                                      vertical:
-                                                                          12.0),
-                                                                  child: Text(
-                                                                    entry.value
-                                                                        .path
-                                                                        .split(
-                                                                            '/')
-                                                                        .last,
-                                                                    style: const TextStyle(
-                                                                        fontWeight:
-                                                                            FontWeight
-                                                                                .w500,
-                                                                        fontSize:
-                                                                            14),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                            ShadTableCell(
-                                                              alignment: Alignment
-                                                                  .centerRight,
-                                                              child:
-                                                                  GestureDetector(
-                                                                onTap: () =>
-                                                                    Navigator.pop(
-                                                                        context,
-                                                                        entry
-                                                                            .value
-                                                                            .path),
-                                                                child: Text(
-                                                                  '${(entry.value.lengthSync() / (1024 * 1024)).toStringAsFixed(1)} MB',
-                                                                  style: const TextStyle(
-                                                                      fontSize:
-                                                                          12),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                          ])
-                                                      .toList(),
-                                                ),
-                                              ),
-                                            ),
-                                            actions: [
-                                              ShadButton.outline(
-                                                onPressed: () =>
-                                                    Navigator.pop(context),
-                                                child: const Text('Cancel'),
-                                              ),
-                                            ],
-                                          );
-                                        },
-                                      );
-
-                                      if (selectedClip != null) {
-                                        setState(() {
-                                          _clipLPath = selectedClip;
-                                          loadedComponents['Clip_L'] = true;
-                                          if (_processor != null) {
-                                            String currentModelPath =
-                                                _processor!.modelPath;
-                                            bool currentFlashAttention =
-                                                _processor!.useFlashAttention;
-                                            SDType currentModelType =
-                                                _processor!.modelType;
-                                            Schedule currentSchedule =
-                                                _processor!.schedule;
-                                            _initializeProcessor(
-                                              currentModelPath,
-                                              currentFlashAttention,
-                                              currentModelType,
-                                              currentSchedule,
-                                            );
-                                          }
-                                        });
-                                      }
-                                    }
-                                  }
-                                },
-                                child: const Text('Load Clip_L'),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ShadButton(
-                                enabled: !(isModelLoading || isGenerating),
-                                onPressed: () async {
-                                  final modelDirPath =
-                                      await getModelDirectory();
-                                  final selectedDir = await FilePicker.platform
-                                      .getDirectoryPath(
-                                          initialDirectory: modelDirPath);
-
-                                  if (selectedDir != null) {
-                                    final directory = Directory(selectedDir);
-                                    final files = directory.listSync();
-                                    final clipFiles = files
-                                        .whereType<File>()
-                                        .where((file) =>
-                                            file.path
-                                                .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin') ||
-                                            file.path.endsWith(
-                                                '.gguf')) // Added .gguf
-                                        .toList();
-
-                                    if (clipFiles.isNotEmpty) {
-                                      final selectedClip =
-                                          await showShadDialog<String>(
-                                        context: context,
-                                        builder: (BuildContext context) {
-                                          return ShadDialog.alert(
-                                            constraints: const BoxConstraints(
-                                                maxWidth: 400),
-                                            title: const Text('Select Clip_G'),
-                                            description: SizedBox(
-                                              height: 300,
-                                              child: Material(
-                                                color: Colors.transparent,
-                                                child: ShadTable.list(
-                                                  header: const [
-                                                    ShadTableCell.header(
-                                                        child: Text('Model',
-                                                            style: TextStyle(
-                                                                fontSize: 16))),
-                                                    ShadTableCell.header(
-                                                        alignment: Alignment
-                                                            .centerRight,
-                                                        child: Text('Size',
-                                                            style: TextStyle(
-                                                                fontSize: 16))),
-                                                  ],
-                                                  columnSpanExtent: (index) {
-                                                    if (index == 0)
-                                                      return const FixedTableSpanExtent(
-                                                          250);
-                                                    if (index == 1)
-                                                      return const FixedTableSpanExtent(
-                                                          80);
-                                                    return null;
-                                                  },
-                                                  children: clipFiles
-                                                      .asMap()
-                                                      .entries
-                                                      .map((entry) => [
-                                                            ShadTableCell(
-                                                              child:
-                                                                  GestureDetector(
-                                                                onTap: () =>
-                                                                    Navigator.pop(
-                                                                        context,
-                                                                        entry
-                                                                            .value
-                                                                            .path),
-                                                                child: Padding(
-                                                                  padding: const EdgeInsets
-                                                                      .symmetric(
-                                                                      vertical:
-                                                                          12.0),
-                                                                  child: Text(
-                                                                    entry.value
-                                                                        .path
-                                                                        .split(
-                                                                            '/')
-                                                                        .last,
-                                                                    style: const TextStyle(
-                                                                        fontWeight:
-                                                                            FontWeight
-                                                                                .w500,
-                                                                        fontSize:
-                                                                            14),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                            ShadTableCell(
-                                                              alignment: Alignment
-                                                                  .centerRight,
-                                                              child:
-                                                                  GestureDetector(
-                                                                onTap: () =>
-                                                                    Navigator.pop(
-                                                                        context,
-                                                                        entry
-                                                                            .value
-                                                                            .path),
-                                                                child: Text(
-                                                                  '${(entry.value.lengthSync() / (1024 * 1024)).toStringAsFixed(1)} MB',
-                                                                  style: const TextStyle(
-                                                                      fontSize:
-                                                                          12),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                          ])
-                                                      .toList(),
-                                                ),
-                                              ),
-                                            ),
-                                            actions: [
-                                              ShadButton.outline(
-                                                onPressed: () =>
-                                                    Navigator.pop(context),
-                                                child: const Text('Cancel'),
-                                              ),
-                                            ],
-                                          );
-                                        },
-                                      );
-
-                                      if (selectedClip != null) {
-                                        setState(() {
-                                          _clipGPath = selectedClip;
-                                          loadedComponents['Clip_G'] = true;
-                                          if (_processor != null) {
-                                            String currentModelPath =
-                                                _processor!.modelPath;
-                                            bool currentFlashAttention =
-                                                _processor!.useFlashAttention;
-                                            SDType currentModelType =
-                                                _processor!.modelType;
-                                            Schedule currentSchedule =
-                                                _processor!.schedule;
-                                            _initializeProcessor(
-                                              currentModelPath,
-                                              currentFlashAttention,
-                                              currentModelType,
-                                              currentSchedule,
-                                            );
-                                          }
-                                        });
-                                      }
-                                    }
-                                  }
-                                },
-                                child: const Text('Load Clip_G'),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ShadButton(
-                                enabled: !(isModelLoading || isGenerating),
-                                onPressed: () async {
-                                  final modelDirPath =
-                                      await getModelDirectory();
-                                  final selectedDir = await FilePicker.platform
-                                      .getDirectoryPath(
-                                          initialDirectory: modelDirPath);
-
-                                  if (selectedDir != null) {
-                                    final directory = Directory(selectedDir);
-                                    final files = directory.listSync();
-                                    final t5Files = files
-                                        .whereType<File>()
-                                        .where((file) =>
-                                            file.path
-                                                .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin') ||
-                                            file.path.endsWith(
-                                                '.gguf')) // Added .gguf
-                                        .toList();
-
-                                    if (t5Files.isNotEmpty) {
-                                      final selectedT5 =
-                                          await showShadDialog<String>(
-                                        context: context,
-                                        builder: (BuildContext context) {
-                                          return ShadDialog.alert(
-                                            constraints: const BoxConstraints(
-                                                maxWidth: 400),
-                                            title: const Text('Select T5XXL'),
-                                            description: SizedBox(
-                                              height: 300,
-                                              child: Material(
-                                                color: Colors.transparent,
-                                                child: ShadTable.list(
-                                                  header: const [
-                                                    ShadTableCell.header(
-                                                        child: Text('Model',
-                                                            style: TextStyle(
-                                                                fontSize: 16))),
-                                                    ShadTableCell.header(
-                                                        alignment: Alignment
-                                                            .centerRight,
-                                                        child: Text('Size',
-                                                            style: TextStyle(
-                                                                fontSize: 16))),
-                                                  ],
-                                                  columnSpanExtent: (index) {
-                                                    if (index == 0)
-                                                      return const FixedTableSpanExtent(
-                                                          250);
-                                                    if (index == 1)
-                                                      return const FixedTableSpanExtent(
-                                                          80);
-                                                    return null;
-                                                  },
-                                                  children: t5Files
-                                                      .asMap()
-                                                      .entries
-                                                      .map((entry) => [
-                                                            ShadTableCell(
-                                                              child:
-                                                                  GestureDetector(
-                                                                onTap: () =>
-                                                                    Navigator.pop(
-                                                                        context,
-                                                                        entry
-                                                                            .value
-                                                                            .path),
-                                                                child: Padding(
-                                                                  padding: const EdgeInsets
-                                                                      .symmetric(
-                                                                      vertical:
-                                                                          12.0),
-                                                                  child: Text(
-                                                                    entry.value
-                                                                        .path
-                                                                        .split(
-                                                                            '/')
-                                                                        .last,
-                                                                    style: const TextStyle(
-                                                                        fontWeight:
-                                                                            FontWeight
-                                                                                .w500,
-                                                                        fontSize:
-                                                                            14),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                            ShadTableCell(
-                                                              alignment: Alignment
-                                                                  .centerRight,
-                                                              child:
-                                                                  GestureDetector(
-                                                                onTap: () =>
-                                                                    Navigator.pop(
-                                                                        context,
-                                                                        entry
-                                                                            .value
-                                                                            .path),
-                                                                child: Text(
-                                                                  '${(entry.value.lengthSync() / (1024 * 1024)).toStringAsFixed(1)} MB',
-                                                                  style: const TextStyle(
-                                                                      fontSize:
-                                                                          12),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                          ])
-                                                      .toList(),
-                                                ),
-                                              ),
-                                            ),
-                                            actions: [
-                                              ShadButton.outline(
-                                                onPressed: () =>
-                                                    Navigator.pop(context),
-                                                child: const Text('Cancel'),
-                                              ),
-                                            ],
-                                          );
-                                        },
-                                      );
-
-                                      if (selectedT5 != null) {
-                                        setState(() {
-                                          _t5xxlPath = selectedT5;
-                                          loadedComponents['T5XXL'] = true;
-                                          if (_processor != null) {
-                                            String currentModelPath =
-                                                _processor!.modelPath;
-                                            bool currentFlashAttention =
-                                                _processor!.useFlashAttention;
-                                            SDType currentModelType =
-                                                _processor!.modelType;
-                                            Schedule currentSchedule =
-                                                _processor!.schedule;
-                                            _initializeProcessor(
-                                              currentModelPath,
-                                              currentFlashAttention,
-                                              currentModelType,
-                                              currentSchedule,
-                                            );
-                                          }
-                                        });
-                                      }
-                                    }
-                                  }
-                                },
-                                child: const Text('Load T5XXL'),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ShadButton(
-                                enabled: !(isModelLoading || isGenerating),
-                                onPressed: () async {
-                                  final modelDirPath =
-                                      await getModelDirectory();
-                                  final selectedDir = await FilePicker.platform
-                                      .getDirectoryPath(
-                                          initialDirectory: modelDirPath);
-
-                                  if (selectedDir != null) {
-                                    setState(() {
-                                      _embedDirPath = selectedDir;
-                                      loadedComponents['Embeddings'] = true;
-                                      if (_processor != null) {
-                                        String currentModelPath =
-                                            _processor!.modelPath;
-                                        bool currentFlashAttention =
-                                            _processor!.useFlashAttention;
-                                        SDType currentModelType =
-                                            _processor!.modelType;
-                                        Schedule currentSchedule =
-                                            _processor!.schedule;
-                                        _initializeProcessor(
-                                          currentModelPath,
-                                          currentFlashAttention,
-                                          currentModelType,
-                                          currentSchedule,
-                                        );
-                                      }
-                                    });
-                                  }
-                                },
-                                child: const Text('Load Embed'),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: ShadButton(
-                                enabled: !(isModelLoading || isGenerating),
-                                onPressed: () async {
-                                  final modelDirPath =
-                                      await getModelDirectory();
-                                  final selectedDir = await FilePicker.platform
-                                      .getDirectoryPath(
-                                          initialDirectory: modelDirPath);
-
-                                  if (selectedDir != null) {
-                                    final directory = Directory(selectedDir);
-                                    final files = directory.listSync();
-                                    final vaeFiles = files
-                                        .whereType<File>()
-                                        .where((file) =>
-                                            file.path
-                                                .endsWith('.safetensors') ||
-                                            file.path.endsWith('.bin'))
-                                        .toList();
-
-                                    if (vaeFiles.isNotEmpty) {
-                                      final selectedVae =
-                                          await showShadDialog<String>(
-                                        context: context,
-                                        builder: (BuildContext context) {
-                                          return ShadDialog.alert(
-                                            constraints: const BoxConstraints(
-                                                maxWidth: 400),
-                                            title: const Text('Select VAE'),
-                                            description: SizedBox(
-                                              height: 300,
-                                              child: Material(
-                                                color: Colors.transparent,
-                                                child: ShadTable.list(
-                                                  header: const [
-                                                    ShadTableCell.header(
-                                                        child: Text('Model',
-                                                            style: TextStyle(
-                                                                fontSize: 16))),
-                                                    ShadTableCell.header(
-                                                        alignment: Alignment
-                                                            .centerRight,
-                                                        child: Text('Size',
-                                                            style: TextStyle(
-                                                                fontSize: 16))),
-                                                  ],
-                                                  columnSpanExtent: (index) {
-                                                    if (index == 0)
-                                                      return const FixedTableSpanExtent(
-                                                          250);
-                                                    if (index == 1)
-                                                      return const FixedTableSpanExtent(
-                                                          80);
-                                                    return null;
-                                                  },
-                                                  children: vaeFiles
-                                                      .asMap()
-                                                      .entries
-                                                      .map((entry) => [
-                                                            ShadTableCell(
-                                                              child:
-                                                                  GestureDetector(
-                                                                onTap: () =>
-                                                                    Navigator.pop(
-                                                                        context,
-                                                                        entry
-                                                                            .value
-                                                                            .path),
-                                                                child: Padding(
-                                                                  padding: const EdgeInsets
-                                                                      .symmetric(
-                                                                      vertical:
-                                                                          12.0),
-                                                                  child: Text(
-                                                                    entry.value
-                                                                        .path
-                                                                        .split(
-                                                                            '/')
-                                                                        .last,
-                                                                    style: const TextStyle(
-                                                                        fontWeight:
-                                                                            FontWeight
-                                                                                .w500,
-                                                                        fontSize:
-                                                                            14),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                            ShadTableCell(
-                                                              alignment: Alignment
-                                                                  .centerRight,
-                                                              child:
-                                                                  GestureDetector(
-                                                                onTap: () =>
-                                                                    Navigator.pop(
-                                                                        context,
-                                                                        entry
-                                                                            .value
-                                                                            .path),
-                                                                child: Text(
-                                                                  '${(entry.value.lengthSync() / (1024 * 1024)).toStringAsFixed(1)} MB',
-                                                                  style: const TextStyle(
-                                                                      fontSize:
-                                                                          12),
-                                                                ),
-                                                              ),
-                                                            ),
-                                                          ])
-                                                      .toList(),
-                                                ),
-                                              ),
-                                            ),
-                                            actions: [
-                                              ShadButton.outline(
-                                                onPressed: () =>
-                                                    Navigator.pop(context),
-                                                child: const Text('Cancel'),
-                                              ),
-                                            ],
-                                          );
-                                        },
-                                      );
-
-                                      if (selectedVae != null) {
-                                        setState(() {
-                                          _vaePath = selectedVae;
-                                          loadedComponents['VAE'] = true;
-                                          if (_processor != null) {
-                                            String currentModelPath =
-                                                _processor!.modelPath;
-                                            bool currentFlashAttention =
-                                                _processor!.useFlashAttention;
-                                            SDType currentModelType =
-                                                _processor!.modelType;
-                                            Schedule currentSchedule =
-                                                _processor!.schedule;
-                                            _initializeProcessor(
-                                              currentModelPath,
-                                              currentFlashAttention,
-                                              currentModelType,
-                                              currentSchedule,
-                                            );
-                                          }
-                                        });
-                                      }
-                                    }
-                                  }
-                                },
-                                child: const Text('Load VAE'),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            ShadCheckbox(
-                              value: useVAE,
-                              onChanged: (bool v) {
-                                if (_vaePath == null) {
-                                  _showTemporaryError(
-                                      'Please load VAE model first');
-                                  return;
-                                }
-                                setState(() {
-                                  useVAE = v;
-                                  if (_processor != null) {
-                                    String currentModelPath =
-                                        _processor!.modelPath;
-                                    bool currentFlashAttention =
-                                        _processor!.useFlashAttention;
-                                    SDType currentModelType =
-                                        _processor!.modelType;
-                                    Schedule currentSchedule =
-                                        _processor!.schedule;
-                                    _initializeProcessor(
-                                      currentModelPath,
-                                      currentFlashAttention,
-                                      currentModelType,
-                                      currentSchedule,
-                                    );
-                                  }
-                                });
-                              },
-                              label: const Text('Use VAE'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        // --- PASTED CONTENT END ---
-
-                        // Removed duplicate Standalone Model Switch
-                        // VAE Tiling checkbox was moved to the Advanced Sampling Options accordion
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            // --- End Advanced Model Options Accordion ---
-
-            const SizedBox(height: 16), // Spacing after accordion
-            ShadInput(
-              key: _promptFieldKey,
-              placeholder: const Text('Prompt'),
-              controller: _promptController,
-              onChanged: (String? v) => setState(() => prompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
-            ShadInput(
-              placeholder: const Text('Negative Prompt'),
-              onChanged: (String? v) =>
-                  setState(() => negativePrompt = v ?? ''),
-            ),
-            const SizedBox(height: 16),
-
-            // --- New Advanced Sampling Options Accordion (Copied from main.dart, VAE Tiling moved here) ---
-            ShadAccordion<Map<String, dynamic>>(
-              children: [
-                ShadAccordionItem<Map<String, dynamic>>(
-                  value: const {}, // Unique value for this item
-                  title: const Text('Advanced Sampling Options'),
-                  child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Moved VAE Tiling Checkbox
-                        ShadCheckbox(
-                          value: useVAETiling,
-                          onChanged: (isModelLoading || isGenerating)
-                              ? null
-                              : (bool v) {
-                                  // Removed check: if (useTAESD && v) { ... }
-                                  setState(() {
-                                    useVAETiling = v;
-                                    // Reinitialize processor if needed
-                                    if (_processor != null) {
-                                      String currentModelPath =
-                                          _processor!.modelPath;
-                                      bool currentFlashAttention =
-                                          _processor!.useFlashAttention;
-                                      SDType currentModelType =
-                                          _processor!.modelType;
-                                      Schedule currentSchedule =
-                                          _processor!.schedule;
-                                      _initializeProcessor(
-                                        currentModelPath,
-                                        currentFlashAttention,
-                                        currentModelType,
-                                        currentSchedule,
-                                      );
-                                    }
-                                  });
-                                },
-                          label: const Text('VAE Tiling'),
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Clip Skip Slider
-                        Row(
-                          children: [
-                            const Text('Clip Skip'),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ShadSlider(
-                                initialValue: clipSkip,
-                                min: 0,
-                                max: 2, // Adjust max if needed for img2img
-                                divisions: 2,
-                                onChanged: (v) => setState(() => clipSkip = v),
-                              ),
-                            ),
-                            Text(clipSkip.toInt().toString()),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Eta Slider
-                        Row(
-                          children: [
-                            const Text('Eta'),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ShadSlider(
-                                initialValue: eta,
-                                min: 0.0,
-                                max: 1.0,
-                                divisions: 20, // 1.0 / 0.05 = 20
-                                onChanged: (v) => setState(() => eta = v),
-                              ),
-                            ),
-                            Text(eta.toStringAsFixed(2)),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Guidance Slider
-                        Row(
-                          children: [
-                            const Text('Guidance'),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ShadSlider(
-                                initialValue: guidance,
-                                min: 0.0,
-                                max: 40.0, // Adjust max if needed
-                                divisions: 800, // 40.0 / 0.05 = 800
-                                onChanged: (v) => setState(() => guidance = v),
-                              ),
-                            ),
-                            Text(guidance.toStringAsFixed(2)),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-
-                        // SLG Scale Slider
-                        Row(
-                          children: [
-                            const Text('SLG Scale'),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ShadSlider(
-                                initialValue: slgScale,
-                                min: 0.0,
-                                max: 7.0, // Adjust max if needed
-                                divisions: 140, // 7.0 / 0.05 = 140
-                                onChanged: (v) => setState(() => slgScale = v),
-                              ),
-                            ),
-                            Text(slgScale.toStringAsFixed(2)),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Skip Layers Text Field
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            ShadInput(
-                              controller: _skipLayersController,
-                              placeholder:
-                                  const Text('Skip Layers (e.g., 7,8,9)'),
-                              keyboardType: TextInputType.text,
-                              onChanged: (String? v) {
-                                final text = v ?? '';
-                                final regex = RegExp(r'^(?:\d+(?:,\s*\d+)*)?$');
-                                if (text.isEmpty || regex.hasMatch(text)) {
-                                  setState(() {
-                                    skipLayersText = text;
-                                    _skipLayersErrorText = null; // Clear error
-                                  });
-                                } else {
-                                  setState(() {
-                                    _skipLayersErrorText =
-                                        'Invalid format (use numbers separated by commas)';
-                                  });
-                                }
-                              },
-                            ),
-                            if (_skipLayersErrorText != null)
-                              Padding(
-                                padding:
-                                    const EdgeInsets.only(top: 4.0, left: 2.0),
-                                child: Text(
-                                  _skipLayersErrorText!,
-                                  style: theme.textTheme.p.copyWith(
-                                    color: Colors.red,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Skip Layer Start Slider
-                        Row(
-                          children: [
-                            const Text('Skip Layer Start'),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ShadSlider(
-                                initialValue: skipLayerStart,
-                                min: 0.0,
-                                max: 1.0,
-                                divisions: 100, // 1.0 / 0.01 = 100
-                                onChanged: (v) {
-                                  if (v < skipLayerEnd) {
-                                    setState(() => skipLayerStart = v);
-                                  }
-                                },
-                              ),
-                            ),
-                            Text(skipLayerStart.toStringAsFixed(2)),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-
-                        // Skip Layer End Slider
-                        Row(
-                          children: [
-                            const Text('Skip Layer End'),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: ShadSlider(
-                                initialValue: skipLayerEnd,
-                                min: 0.0,
-                                max: 1.0,
-                                divisions: 100, // 1.0 / 0.01 = 100
-                                onChanged: (v) {
-                                  if (v > skipLayerStart) {
-                                    setState(() => skipLayerEnd = v);
-                                  }
-                                },
-                              ),
-                            ),
-                            Text(skipLayerEnd.toStringAsFixed(2)),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            // --- End New Accordion ---
-
-            const SizedBox(height: 16),
-            // Removed the old, empty "Advanced Options" accordion
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('Use ControlNet'),
-                const SizedBox(width: 8),
-                ShadSwitch(
-                  value: useControlNet,
-                  onChanged: (isModelLoading || isGenerating)
-                      ? null // Disable switch while loading or generating
-                      : (bool v) {
-                          setState(() {
-                            useControlNet = v;
-                            // Only reinitialize if a main model is already loaded
-                            if (_processor != null) {
-                              String currentModelPath = _processor!.modelPath;
-                              bool currentFlashAttention =
-                                  _processor!.useFlashAttention;
-                              SDType currentModelType = _processor!.modelType;
-                              Schedule currentSchedule = _processor!.schedule;
-
-                              if (v) {
-                                // Enabling ControlNet
-                                // Reload ONLY if a ControlNet model path is actually set.
-                                if (_controlNetPath != null) {
-                                  print(
-                                      "Re-initializing processor to ENABLE ControlNet with path: $_controlNetPath");
-                                  _initializeProcessor(
-                                    currentModelPath,
-                                    currentFlashAttention,
-                                    currentModelType,
-                                    currentSchedule,
-                                  );
-                                } else {
-                                  print(
-                                      "Enabled ControlNet switch, but no ControlNet model loaded. No reload needed.");
-                                }
-                              } else {
-                                // Disabling ControlNet
-                                // Reload ONLY if a ControlNet model path was previously set.
-                                if (_controlNetPath != null) {
-                                  print(
-                                      "Re-initializing processor to DISABLE ControlNet. Original path was: $_controlNetPath");
-                                  String? originalControlNetPath =
-                                      _controlNetPath; // Store original path
-                                  _controlNetPath =
-                                      null; // Temporarily remove path for reload
-
-                                  _initializeProcessor(
-                                    currentModelPath,
-                                    currentFlashAttention,
-                                    currentModelType,
-                                    currentSchedule,
-                                  );
-
-                                  // DO NOT restore the path. Clear it permanently when disabling.
-                                  // _controlNetPath = originalControlNetPath;
-                                  // Remove the loaded indicator regardless of reload
-                                  loadedComponents.remove('ControlNet');
-                                } else {
-                                  print(
-                                      "Disabled ControlNet switch, but no ControlNet model was loaded anyway. No reload needed.");
-                                  // Still remove the indicator if it somehow exists
-                                  loadedComponents.remove('ControlNet');
-                                }
-                              }
-                            } else {
-                              print(
-                                  "ControlNet switch toggled, but no main model loaded. No action taken.");
-                            }
-                          });
-                        },
-                ),
-              ],
-            ),
-            if (useControlNet) ...[
-              const SizedBox(height: 16),
-              ShadAccordion<Map<String, dynamic>>(
-                children: [
-                  // Replace the ControlNet options section with this improved version
-                  ShadAccordionItem<Map<String, dynamic>>(
-                    value: const {},
-                    title: const Text('ControlNet Options'),
-                    child: Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment
-                            .start, // Align children to the left
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                // Made the button expand to full width to prevent overflow
-                                child: ShadButton(
-                                  enabled: !(isModelLoading || isGenerating),
-                                  onPressed: () async {
-                                    final modelDirPath =
-                                        await getModelDirectory();
-                                    final selectedDir = await FilePicker
-                                        .platform
-                                        .getDirectoryPath(
-                                            initialDirectory: modelDirPath);
-
-                                    if (selectedDir != null) {
-                                      final directory = Directory(selectedDir);
-                                      final files = directory.listSync();
-                                      final controlNetFiles = files
-                                          .whereType<File>()
-                                          .where((file) =>
-                                              file.path
-                                                  .endsWith('.safetensors') ||
-                                              file.path.endsWith('.bin') ||
-                                              file.path.endsWith('.pth') ||
-                                              file.path.endsWith('.ckpt'))
-                                          .toList();
-
-                                      if (controlNetFiles.isNotEmpty) {
-                                        final selectedControlNet =
-                                            await showShadDialog<String>(
-                                          context: context,
-                                          builder: (BuildContext context) {
-                                            return ShadDialog.alert(
-                                              constraints: const BoxConstraints(
-                                                  maxWidth: 400),
-                                              title: const Text(
-                                                  'Select ControlNet Model'),
-                                              description: SizedBox(
-                                                height: 300,
-                                                child: Material(
-                                                  color: Colors.transparent,
-                                                  child: ShadTable.list(
-                                                    header: const [
-                                                      ShadTableCell.header(
-                                                          child: Text('Model',
-                                                              style: TextStyle(
-                                                                  fontSize:
-                                                                      16))),
-                                                      ShadTableCell.header(
-                                                          alignment: Alignment
-                                                              .centerRight,
-                                                          child: Text('Size',
-                                                              style: TextStyle(
-                                                                  fontSize:
-                                                                      16))),
-                                                    ],
-                                                    columnSpanExtent: (index) {
-                                                      if (index == 0)
-                                                        return const FixedTableSpanExtent(
-                                                            250);
-                                                      if (index == 1)
-                                                        return const FixedTableSpanExtent(
-                                                            80);
-                                                      return null;
-                                                    },
-                                                    children: controlNetFiles
-                                                        .asMap()
-                                                        .entries
-                                                        .map((entry) => [
-                                                              ShadTableCell(
-                                                                child:
-                                                                    GestureDetector(
-                                                                  onTap: () => Navigator.pop(
-                                                                      context,
-                                                                      entry
-                                                                          .value
-                                                                          .path),
-                                                                  child:
-                                                                      Padding(
-                                                                    padding: const EdgeInsets
-                                                                        .symmetric(
-                                                                        vertical:
-                                                                            12.0),
-                                                                    child: Text(
-                                                                      entry
-                                                                          .value
-                                                                          .path
-                                                                          .split(
-                                                                              '/')
-                                                                          .last,
-                                                                      style: const TextStyle(
-                                                                          fontWeight: FontWeight
-                                                                              .w500,
-                                                                          fontSize:
-                                                                              14),
-                                                                    ),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                              ShadTableCell(
-                                                                alignment: Alignment
-                                                                    .centerRight,
-                                                                child:
-                                                                    GestureDetector(
-                                                                  onTap: () => Navigator.pop(
-                                                                      context,
-                                                                      entry
-                                                                          .value
-                                                                          .path),
-                                                                  child: Text(
-                                                                    '${(entry.value.lengthSync() / (1024 * 1024)).toStringAsFixed(1)} MB',
-                                                                    style: const TextStyle(
-                                                                        fontSize:
-                                                                            12),
-                                                                  ),
-                                                                ),
-                                                              ),
-                                                            ])
-                                                        .toList(),
-                                                  ),
-                                                ),
-                                              ),
-                                              actions: [
-                                                ShadButton.outline(
-                                                  onPressed: () =>
-                                                      Navigator.pop(context),
-                                                  child: const Text('Cancel'),
-                                                ),
-                                              ],
-                                            );
-                                          },
-                                        );
-
-                                        if (selectedControlNet != null) {
-                                          setState(() {
-                                            _controlNetPath =
-                                                selectedControlNet;
-                                            loadedComponents['ControlNet'] =
-                                                true;
-                                            if (_processor != null) {
-                                              String currentModelPath =
-                                                  _processor!.modelPath;
-                                              bool currentFlashAttention =
-                                                  _processor!.useFlashAttention;
-                                              SDType currentModelType =
-                                                  _processor!.modelType;
-                                              Schedule currentSchedule =
-                                                  _processor!.schedule;
-                                              _initializeProcessor(
-                                                currentModelPath,
-                                                currentFlashAttention,
-                                                currentModelType,
-                                                currentSchedule,
-                                              );
-                                            }
-                                          });
-                                        }
-                                      }
-                                    }
-                                  },
-                                  child: const Text('Load ControlNet'),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          // Removed "Use Image Reference" checkbox
-                          // Always show image input and Canny options when ControlNet is enabled
-                          ...[
-                            const SizedBox(height: 16),
-                            GestureDetector(
-                              onTap: (isModelLoading || isGenerating)
-                                  ? null
-                                  : () async {
-                                      final picker = ImagePicker();
-                                      final pickedFile = await picker.pickImage(
-                                          source: ImageSource.gallery);
-
-                                      if (pickedFile != null) {
-                                        final bytes =
-                                            await pickedFile.readAsBytes();
-                                        final decodedImage =
-                                            img.decodeImage(bytes);
-
-                                        if (decodedImage == null) {
-                                          _showTemporaryError(
-                                              'Failed to decode image');
-                                          return;
-                                        }
-
-                                        final rgbBytes = Uint8List(
-                                            decodedImage.width *
-                                                decodedImage.height *
-                                                3);
-                                        int rgbIndex = 0;
-
-                                        for (int y = 0;
-                                            y < decodedImage.height;
-                                            y++) {
-                                          for (int x = 0;
-                                              x < decodedImage.width;
-                                              x++) {
-                                            final pixel =
-                                                decodedImage.getPixel(x, y);
-                                            rgbBytes[rgbIndex] =
-                                                pixel.r.toInt();
-                                            rgbBytes[rgbIndex + 1] =
-                                                pixel.g.toInt();
-                                            rgbBytes[rgbIndex + 2] =
-                                                pixel.b.toInt();
-                                            rgbIndex += 3;
-                                          }
-                                        }
-
-                                        setState(() {
-                                          _controlImage = File(pickedFile.path);
-                                          _controlRgbBytes = rgbBytes;
-                                          _controlWidth = decodedImage.width;
-                                          _controlHeight = decodedImage.height;
-                                        });
-                                      }
-                                    },
-                              child: DottedBorder(
-                                borderType: BorderType.RRect,
-                                radius: const Radius.circular(8),
-                                color:
-                                    theme.colorScheme.primary.withOpacity(0.5),
-                                strokeWidth: 2,
-                                dashPattern: const [8, 4],
-                                child: Container(
-                                  height: 200,
-                                  width: double.infinity,
-                                  child: Center(
-                                    child: _controlImage == null
-                                        ? Column(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.center,
-                                            children: [
-                                              Icon(
-                                                Icons.add_photo_alternate,
-                                                size: 64,
-                                                color: theme.colorScheme.primary
-                                                    .withOpacity(0.5),
-                                              ),
-                                              const SizedBox(height: 12),
-                                              Text(
-                                                'Load control image',
-                                                style: TextStyle(
-                                                    color: theme
-                                                        .colorScheme.primary
-                                                        .withOpacity(0.5),
-                                                    fontSize: 16),
-                                              ),
-                                            ],
-                                          )
-                                        : Image.file(_controlImage!,
-                                            fit: BoxFit.contain),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            // Left-aligned checkbox for "Use Canny"
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Row(
-                                children: [
-                                  ShadCheckbox(
-                                    value: useCanny,
-                                    onChanged: (_controlImage == null ||
-                                            isModelLoading ||
-                                            isGenerating ||
-                                            isCannyProcessing)
-                                        ? null
-                                        : (bool v) {
-                                            setState(() {
-                                              useCanny = v;
-                                              if (v && _controlImage != null) {
-                                                // Process the image with Canny
-                                                _processCannyImage();
-                                              }
-                                            });
-                                          },
-                                    label: const Text('Use Canny'),
-                                  ),
-                                  if (isCannyProcessing)
-                                    Padding(
-                                      padding: const EdgeInsets.only(left: 8.0),
-                                      child: SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: theme.colorScheme.primary,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                            if (useCanny && _cannyImage != null) ...[
-                              const SizedBox(height: 16),
-                              const Text('Canny Edge Detection Result',
-                                  style:
-                                      TextStyle(fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
-                              Container(
-                                decoration: BoxDecoration(
-                                  border: Border.all(
-                                      color: theme.colorScheme.primary
-                                          .withOpacity(0.5)),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                height: 200,
-                                width: double.infinity,
-                                child: Center(
-                                  child: _cannyImage!,
-                                ),
-                              ),
-                            ],
-                          ], // End of always shown block
-                          const SizedBox(height: 16),
-                          // Dropdown for Crop/Resize ControlNet Image
-                          Row(
-                            children: [
-                              const Text('Reference Handling:'),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: ShadSelect<String>(
-                                  placeholder:
-                                      Text(_controlImageProcessingMode),
-                                  options: const [
-                                    ShadOption(
-                                        value: 'Resize', child: Text('Resize')),
-                                    ShadOption(
-                                        value: 'Crop', child: Text('Crop')),
-                                  ],
-                                  selectedOptionBuilder: (context, value) =>
-                                      Text(value),
-                                  onChanged: (String? value) {
-                                    if (value != null) {
-                                      setState(() =>
-                                          _controlImageProcessingMode = value);
-                                    }
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          Row(
-                            children: [
-                              const Text('Control Strength'),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: ShadSlider(
-                                  initialValue: controlStrength,
-                                  min: 0.0,
-                                  max: 1.0,
-                                  divisions: 20,
-                                  onChanged: (v) =>
-                                      setState(() => controlStrength = v),
-                                ),
-                              ),
-                              Text(controlStrength.toStringAsFixed(2)),
-                            ],
-                          ),
-                        ],
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    // Main execution bottom control dashboard
+                    Row(
+                      children: [
+                        ShadButton.outline(
+                          onPressed: _generationLogs.isNotEmpty
+                              ? () => _showLogsDialog(context, _generationLogs)
+                              : null,
+                          icon: const Icon(Icons.analytics_outlined),
+                          child: const Text('Inspect Stream Logs'),
+                        ),
+                        const Spacer(),
+                        ShadButton(
+                          onPressed: !_isGenerating && _isModelLoaded && _initImageBytes != null
+                              ? _startGeneration
+                              : null,
+                          size: ShadButtonSize.lg,
+                          child: Row(
+                            children: const [
+                              Icon(Icons.bolt, size: 18),
+                              SizedBox(width: 6),
+                              Text('Generate Matrix Vector'),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ],
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('Sampling Method'),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ShadSelect<String>(
-                    placeholder: const Text('tcd'),
-                    options: samplingMethods
-                        .map((method) =>
-                            ShadOption(value: method, child: Text(method)))
-                        .toList(),
-                    selectedOptionBuilder: (context, value) => Text(value),
-                    onChanged: (String? value) =>
-                        setState(() => samplingMethod = value ?? 'tcd'),
-                  ),
-                ),
-              ],
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('CFG'),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ShadSlider(
-                    initialValue: cfg,
-                    min: 1,
-                    max: 2,
-                    divisions: 20,
-                    onChanged: (v) => setState(() => cfg = v),
-                  ),
-                ),
-                Text(cfg.toStringAsFixed(1)),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('Steps'),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ShadSlider(
-                    initialValue: steps.toDouble(),
-                    min: 1,
-                    max: 4,
-                    divisions: 3,
-                    onChanged: (v) => setState(() => steps = v.toInt()),
-                  ),
-                ),
-                Text(steps.toString()),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('Strength'),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ShadSlider(
-                    initialValue: strength,
-                    min: 0.0,
-                    max: 1.0,
-                    divisions: 20,
-                    onChanged: (v) => setState(() => strength = v),
-                  ),
-                ),
-                Text(strength.toStringAsFixed(2)),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('Width'),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ShadSelect<int>(
-                    enabled: !_showCropUI, // Disable dropdown when cropping
-                    placeholder: Text(
-                      // Display effective width
-                      (_showCropUI ? width : (_inputWidth ?? 256))
-                          .toString(), // Default to 512 if no input
-                    ),
-                    options: _showCropUI
-                        ? const []
-                        : getWidthOptions() // No options needed when disabled
-                            .map((w) =>
-                                ShadOption(value: w, child: Text(w.toString())))
-                            .toList(),
-                    selectedOptionBuilder: (context, value) =>
-                        Text(value.toString()),
-                    onChanged: _showCropUI
-                        ? null
-                        : (int? value) {
-                            // Remove onChanged when cropping
-                            if (value != null) setState(() => width = value);
-                          },
-                  ),
-                ),
-                const SizedBox(width: 16),
-                const Text('Height'),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ShadSelect<int>(
-                    enabled: !_showCropUI, // Disable dropdown when cropping
-                    placeholder: Text(
-                      // Display effective height
-                      (_showCropUI
-                              ? height
-                              : (_inputHeight ??
-                                  256)) // Default to 512 if no input
-                          .toString(),
-                    ),
-                    options: _showCropUI
-                        ? const []
-                        : getHeightOptions() // No options needed when disabled
-                            .map((h) =>
-                                ShadOption(value: h, child: Text(h.toString())))
-                            .toList(),
-                    selectedOptionBuilder: (context, value) =>
-                        Text(value.toString()),
-                    onChanged: _showCropUI
-                        ? null
-                        : (int? value) {
-                            // Remove onChanged when cropping
-                            if (value != null) setState(() => height = value);
-                          },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            const Text('Seed (-1 for random)'),
-            const SizedBox(height: 8),
-            ShadInput(
-              placeholder: const Text('Seed'),
-              keyboardType: TextInputType.number,
-              onChanged: (String? v) => setState(() => seed = v ?? "-1"),
-              initialValue: seed,
-            ),
-            const SizedBox(height: 16),
-            Row(
-              // Wrap buttons in a Row
-              children: [
-                ShadButton(
-                  enabled: !(isModelLoading || isGenerating),
-                  onPressed: () async {
-                    // Make onPressed async
-                    if (_processor == null) {
-                      _handleLoadingError(
-                          'modelError', 'Please load a model first.');
-                      // Scroll to top to show the error
-                      _scrollController.animateTo(
-                        0.0,
-                        duration: const Duration(milliseconds: 500),
-                        curve: Curves.easeInOut,
-                      );
-                      return;
-                    }
-                    if (_inputImage == null) {
-                      // Show temporary error without full reset
-                      setState(() {
-                        _loadingError = 'Please select an input image first.';
-                        _loadingErrorType = 'inputError';
-                      });
-                      _loadingErrorTimer?.cancel(); // Cancel previous timer
-                      _loadingErrorTimer =
-                          Timer(const Duration(seconds: 10), () {
-                        if (mounted) {
-                          setState(() {
-                            _loadingError = '';
-                            _loadingErrorType = '';
-                          });
-                        }
-                      });
-                      // Scroll to top to show the error
-                      _scrollController.animateTo(
-                        0.0,
-                        duration: const Duration(milliseconds: 500),
-                        curve: Curves.easeInOut,
-                      );
-                      return;
-                    }
-                    // Clear any previous loading errors before generating
-                    if (_loadingError.isNotEmpty) {
-                      setState(() {
-                        _loadingError = '';
-                        _loadingErrorType = '';
-                        _loadingErrorTimer?.cancel();
-                      });
-                    }
-                    setState(() {
-                      isGenerating = true;
-                      // _modelError = ''; // Removed
-                      status = 'Preparing image...'; // Update status
-                      progress = 0;
-                      _generationLogs = []; // Clear previous logs
-                      _showLogsButton =
-                          false; // Hide log button until generation finishes
-                    });
-
-                    // Perform cropping if UI is active
-                    CroppedImageData? croppedData;
-                    if (_showCropUI) {
-                      croppedData = await _getCroppedImageData();
-                      if (croppedData == null && _showCropUI) {
-                        // Cropping failed or was invalid, stop generation
-                        setState(() {
-                          isGenerating = false;
-                          status = 'Image cropping failed.';
-                        });
-                        return; // Don't proceed if cropping failed but was expected
-                      }
-                    }
-
-                    // Determine effective image data and dimensions
-                    final Uint8List effectiveImageData =
-                        croppedData?.imageBytes ?? _rgbBytes!;
-                    final int effectiveWidth =
-                        croppedData?.width ?? _inputWidth!;
-                    final int effectiveHeight =
-                        croppedData?.height ?? _inputHeight!;
-
-                    // --- Control Image Processing Logic ---
-                    Uint8List? finalControlBytes;
-                    int? finalControlWidth;
-                    int? finalControlHeight;
-
-                    // Determine the source control image data (Canny or original control image)
-                    Uint8List? sourceControlBytes;
-                    int? sourceControlWidth;
-                    int? sourceControlHeight;
-
-                    if (useControlNet) {
-                      // Removed check for useControlImage
-                      if (useCanny && _cannyProcessor?.resultRgbBytes != null) {
-                        // Use Canny result if available and Canny is enabled
-                        sourceControlBytes = _cannyProcessor!.resultRgbBytes!;
-                        sourceControlWidth = _cannyProcessor!.resultWidth!;
-                        sourceControlHeight = _cannyProcessor!.resultHeight!;
-                        // Ensure Canny result is RGB
-                        sourceControlBytes = _ensureRgbFormat(
-                            sourceControlBytes,
-                            sourceControlWidth,
-                            sourceControlHeight);
-                      } else if (_controlRgbBytes != null) {
-                        // Use original control image if Canny is not used or failed
-                        sourceControlBytes = _controlRgbBytes;
-                        sourceControlWidth = _controlWidth;
-                        sourceControlHeight = _controlHeight;
-                        // Ensure original control image is RGB (already done on load, but double-check)
-                        if (sourceControlBytes != null &&
-                            sourceControlWidth != null &&
-                            sourceControlHeight != null) {
-                          sourceControlBytes = _ensureRgbFormat(
-                              sourceControlBytes,
-                              sourceControlWidth,
-                              sourceControlHeight);
-                        }
-                      }
-                    }
-
-                    if (sourceControlBytes != null &&
-                        sourceControlWidth != null &&
-                        sourceControlHeight != null) {
-                      // Check if control image dimensions match the target (effective input) size
-                      if (sourceControlWidth != effectiveWidth ||
-                          sourceControlHeight != effectiveHeight) {
-                        try {
-                          print(
-                              'Control image dimensions ($sourceControlWidth x $sourceControlHeight) differ from target ($effectiveWidth x $effectiveHeight). Processing using $_controlImageProcessingMode...');
-                          ProcessedImageData processedData;
-                          if (_controlImageProcessingMode == 'Crop') {
-                            processedData = cropImage(
-                                sourceControlBytes,
-                                sourceControlWidth,
-                                sourceControlHeight,
-                                effectiveWidth,
-                                effectiveHeight);
-                          } else {
-                            // Default to Resize
-                            processedData = resizeImage(
-                                sourceControlBytes,
-                                sourceControlWidth,
-                                sourceControlHeight,
-                                effectiveWidth,
-                                effectiveHeight);
-                          }
-                          finalControlBytes = processedData.bytes;
-                          finalControlWidth = processedData.width;
-                          finalControlHeight = processedData.height;
-                          print(
-                              'Control image processed to $finalControlWidth x $finalControlHeight.');
-                        } catch (e) {
-                          print("Error processing control image: $e");
-                          // Optionally show an error to the user
-                          _showTemporaryError(
-                              'Error processing control image: $e');
-                          setState(
-                              () => isGenerating = false); // Stop generation
-                          return; // Prevent calling generateImage
-                        }
-                      } else {
-                        // Dimensions already match, use the source directly
-                        finalControlBytes = sourceControlBytes;
-                        finalControlWidth = sourceControlWidth;
-                        finalControlHeight = sourceControlHeight;
-                      }
-                    } else {
-                      // No valid source control image, ensure control params are null
-                      finalControlBytes = null;
-                      finalControlWidth = null;
-                      finalControlHeight = null;
-                    }
-                    // --- End Control Image Processing Logic ---
-
-                    // --- Skip Layers Formatting ---
-                    String? formattedSkipLayers;
-                    if (_skipLayersErrorText == null &&
-                        skipLayersText.trim().isNotEmpty) {
-                      final numbers = skipLayersText
-                          .split(',')
-                          .map((s) => s.trim())
-                          .where((s) => s.isNotEmpty)
-                          .toList();
-                      if (numbers.isNotEmpty) {
-                        formattedSkipLayers = '[${numbers.join(',')}]';
-                      }
-                    }
-                    // --- End Skip Layers Formatting ---
-
-                    _processor!.generateImg2Img(
-                      inputImageData: effectiveImageData, // Use effective data
-                      inputWidth: effectiveWidth, // Use effective width
-                      inputHeight: effectiveHeight, // Use effective height
-                      channel: 3, // Assuming RGB
-                      outputWidth:
-                          effectiveWidth, // Output should match effective input
-                      outputHeight:
-                          effectiveHeight, // Output should match effective input
-                      prompt: prompt,
-                      negativePrompt: negativePrompt,
-                      clipSkip: clipSkip.toInt(), // Already passed
-                      cfgScale: cfg, // Already passed
-                      guidance: guidance, // New
-                      eta: eta, // New
-                      sampleMethod: SampleMethod.values
-                          .firstWhere(
-                            (method) =>
-                                method.displayName.toLowerCase() ==
-                                samplingMethod.toLowerCase(),
-                            orElse: () => SampleMethod.EULER_A,
-                          )
-                          .index, // Already passed
-                      sampleSteps: steps, // Already passed
-                      strength: strength, // Already passed
-                      seed: int.tryParse(seed) ?? -1, // Already passed
-                      batchCount: 1, // Already passed
-                      controlImageData:
-                          finalControlBytes, // Use processed bytes (Already passed)
-                      controlImageWidth:
-                          finalControlWidth, // Use processed width (Already passed)
-                      controlImageHeight:
-                          finalControlHeight, // Use processed height (Already passed)
-                      controlStrength: controlStrength, // Already passed
-                      // New sampling parameters
-                      slgScale: slgScale,
-                      skipLayersText: formattedSkipLayers,
-                      skipLayerStart: skipLayerStart,
-                      skipLayerEnd: skipLayerEnd,
-                      // Mask parameters (if needed in the future, add here)
-                      maskImageData: null,
-                      maskWidth: null,
-                      maskHeight: null,
-                    );
-                  },
-                  child: const Text('Generate'),
-                ),
-                const SizedBox(width: 8), // Add spacing between buttons
-                if (_showLogsButton &&
-                    _generationLogs
-                        .isNotEmpty) // Conditionally show the log button only if logs exist
-                  ShadButton.outline(
-                    onPressed: _showLogsDialog,
-                    child: const Text('Show Logs'),
-                  ),
-              ],
-            ),
-            // Removed old _modelError display logic
-            const SizedBox(height: 16),
-            LinearProgressIndicator(
-              value: progress,
-              backgroundColor: theme.colorScheme.background,
-              color: theme.colorScheme.primary,
-            ),
-            const SizedBox(height: 8),
-            Text(status, style: theme.textTheme.p),
-            if (_generatedImage != null) ...[
-              const SizedBox(height: 20),
-              _generatedImage!,
-            ],
           ],
         ),
       ),
     );
   }
 
-  // Method to show the logs dialog
-  void _showLogsDialog() {
-    final theme = ShadTheme.of(context); // Get theme for dialog styling
+  // Presentation alert box viewport parsing the processing loops logs
+  void _showLogsDialog(BuildContext context, List<String> logs) {
     showShadDialog(
       context: context,
       builder: (context) => ShadDialog.alert(
-        constraints:
-            const BoxConstraints(maxWidth: 600, maxHeight: 500), // Adjust size
-        title: const Text('Generation Logs'),
+        constraints: const BoxConstraints(maxWidth: 700, maxHeight: 500),
+        title: const Text('Isolate Execution Feed Logs'),
         description: SizedBox(
-          // Constrain the height of the scrollable area
-          height: 300, // Adjust height as needed
+          height: 320,
           child: SingleChildScrollView(
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(vertical: 8.0, horizontal: 4.0),
+              padding: const EdgeInsets.symmetric(vertical: 6.0),
               child: SelectableText(
-                _generationLogs.join('\n'), // Join logs with newlines
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                logs.join('\n'),
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
               ),
             ),
           ),
@@ -3734,7 +764,7 @@ class _Img2ImgPageState extends State<Img2ImgPage>
         actions: [
           ShadButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            child: const Text('Dismiss View'),
           ),
         ],
       ),
