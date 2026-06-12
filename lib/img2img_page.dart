@@ -3,7 +3,6 @@ import 'dart:ui' as ui;
 import 'dart:async';
 import 'dart:typed_data';
 import 'dart:developer' as developer;
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -12,7 +11,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import 'package:dotted_border/dotted_border.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 
 import 'ffi_bindings.dart';
 import 'img2img_processor.dart';
@@ -29,13 +27,13 @@ class Img2ImgPage extends StatefulWidget {
 class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStateMixin {
   final ScrollController _scrollController = ScrollController();
   
-  // Controllers for text specifications
+  // Parameter Input Controllers
   final TextEditingController _promptController = TextEditingController();
   final TextEditingController _negativePromptController = TextEditingController();
   final TextEditingController _seedController = TextEditingController(text: "-1");
   final TextEditingController _skipLayersController = TextEditingController(text: "[7, 8, 9]");
 
-  // Image Processing State Data
+  // Image Core State Data
   Uint8List? _initImageBytes;
   int? _initImageWidth;
   int? _initImageHeight;
@@ -46,11 +44,11 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
   int? _controlImageHeight;
   String? _controlImageName;
 
-  ui.Image? _generatedUiImage;
   Image? _generatedWidgetImage;
+  ui.Image? _generatedUiImage;
   String? _generationTime;
 
-  // Processing Context Properties
+  // Processing Core Infrastructure
   Img2ImgProcessor? _processor;
   String? _modelPath;
   bool _isModelLoaded = false;
@@ -59,12 +57,12 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
   String _statusText = "Ready";
   List<String> _generationLogs = [];
 
-  // Generation Settings Adjustments
+  // Latent Hyperparameters
   double _denoisingStrength = 0.75;
-  double _cfgScale = 1.0;
+  double _cfgScale = 7.0;
   double _guidanceScale = 3.5;
   double _controlStrength = 0.9;
-  int _sampleSteps = 4;
+  int _sampleSteps = 20;
   int _clipSkip = 2;
   int _outputWidth = 512;
   int _outputHeight = 512;
@@ -77,12 +75,11 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
   bool _vaeTiling = false;
   bool _isDiffusionModelType = false;
 
-  // Automatic TAESD Integration Parameters
+  // Automated TAESD Asset States
   String? _bundledTaesdDir;
   String? _taesdPath;
   bool _useTAESD = false;
-  String _taesdMessage = 'TAESD searching...';
-  Map<String, bool> _loadedComponents = {};
+  String _taesdMessage = 'Searching for TAESD decoder asset...';
   
   final Map<String, String> _bundledTaesdAssets = {
     'sd1': 'taesd_decoder.safetensors',
@@ -105,7 +102,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
     super.dispose();
   }
 
-  // Auto-loads the tiny autoencoder cleanly from application document streams
+  // Scans application documents on load to mount taesd_decoder natively
   Future<void> _initBundledTaesd() async {
     try {
       final directory = await getApplicationDocumentsDirectory();
@@ -117,49 +114,48 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
           _bundledTaesdDir = directory.path;
           _taesdPath = targetPath;
           _useTAESD = true;
-          _loadedComponents['TAESD'] = true;
-          _taesdMessage = 'TAESD auto-loaded (Bundled)';
+          _taesdMessage = 'TAESD Auto-Loaded ($assetName)';
         });
-        developer.log("TAESD implicitly discovered and assigned: $_taesdPath");
+        developer.log("TAESD auto-loaded seamlessly from: $_taesdPath");
       } else {
         setState(() {
           _useTAESD = false;
-          _taesdMessage = 'TAESD file missing in application files';
+          _taesdMessage = 'TAESD unlinked (Optional file taesd_decoder.safetensors not in Documents)';
         });
-        developer.log("TAESD not found at expected environment path: $targetPath");
+        developer.log("TAESD optional path not found at: $targetPath");
       }
     } catch (e) {
       setState(() {
         _useTAESD = false;
-        _taesdMessage = 'TAESD initialization error';
+        _taesdMessage = 'TAESD status discovery exception';
       });
-      developer.log("Exception verifying bundled asset paths: $e");
+      developer.log("Exception checking local document spaces: $e");
     }
   }
 
-  // Model selection execution routine
+  // Model file choice handler
   Future<void> _pickModel() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.any,
-      dialogTitle: 'Select Stable Diffusion Model (.safetensors / .ckpt)',
+      dialogTitle: 'Select Base Stable Diffusion Model (.safetensors)',
     );
 
     if (result != null && result.files.single.path != null) {
       setState(() {
         _modelPath = result.files.single.path;
         _isModelLoaded = false;
-        _statusText = "Model selected. Click 'Load Model' to begin initialization.";
+        _statusText = "Model file linked. Direct load required.";
       });
     }
   }
 
-  // Initialize the engine isolate structure
+  // Spawns backend Isolate pipelines
   Future<void> _loadModel() async {
     if (_modelPath == null) {
       ShadToaster.of(context).show(
         const ShadToast.destructive(
-          title: Text('Error'),
-          description: Text('Please pick a primary base model file first.'),
+          title: Text('Setup Blocked'),
+          description: Text('Select a primary base model architecture checkpoint first.'),
         ),
       );
       return;
@@ -167,7 +163,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
 
     setState(() {
       _isGenerating = true;
-      _statusText = "Initializing context frameworks inside engine...";
+      _statusText = "Compiling weights inside generation isolate threads...";
       _generationLogs.clear();
     });
 
@@ -184,12 +180,13 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
       clipSkip: _clipSkip,
     );
 
-    // Bind log listeners to interface arrays
+    // Track state transformations via native stream emissions
     _processor!.logListStream.listen((logs) {
-      setState(() => _generationLogs = logs);
+      if (mounted) setState(() => _generationLogs = logs);
     });
 
     _processor!.generationResultStream.listen((result) {
+      if (!mounted) return;
       final ui.Image? rawImg = result['image'];
       final String? timeTaken = result['generationTime'];
       if (rawImg != null) {
@@ -197,16 +194,19 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
       }
     });
 
-    // Simulated complete fallback context (Isolate feedback updates via log hooks automatically)
-    await Future.delayed(const Duration(seconds: 2));
-    setState(() {
-      _isModelLoaded = true;
-      _isGenerating = false;
-      _statusText = "Model context initialized successfully.";
+    _processor!.loadingStream.listen((isLoading) {
+      if (!mounted) return;
+      if (!isLoading && !_isModelLoaded) {
+        setState(() {
+          _isModelLoaded = true;
+          _isGenerating = false;
+          _statusText = "Model runtime environment loaded completely.";
+        });
+      }
     });
   }
 
-  // Image upload handling routines
+  // Input source handlers (Enforces multiples of 8 constraints)
   Future<void> _pickInitialImage(ImageSource source) async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: source);
@@ -215,7 +215,6 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
       final bytes = await pickedFile.readAsBytes();
       final decoded = img.decodeImage(bytes);
       if (decoded != null) {
-        // Adjust resolution dimensions to enforce alignment to multiples of 8
         final processedWidth = (decoded.width ~/ 8) * 8;
         final processedHeight = (decoded.height ~/ 8) * 8;
 
@@ -249,7 +248,6 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
     }
   }
 
-  // Convert raw UI pipeline formats to high level widget wrappers
   Future<void> _convertUiImageToWidget(ui.Image image, String? timeTaken) async {
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     if (byteData != null) {
@@ -259,18 +257,18 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
         _generationTime = timeTaken;
         _isGenerating = false;
         _progressValue = 1.0;
-        _statusText = "Processing Completed ${timeTaken ?? ''}";
+        _statusText = "Synthesized image ready! ${timeTaken ?? ''}";
       });
     }
   }
 
-  // Dispatch prompt context variables into the processing frame execution loops
+  // Prepares data and dispatches generation pipeline
   Future<void> _startGeneration() async {
     if (_processor == null || !_isModelLoaded) {
       ShadToaster.of(context).show(
         const ShadToast.destructive(
-          title: Text('Execution Halted'),
-          description: Text('Ensure engine processing models are fully compiled before synthesis.'),
+          title: Text('Pipeline Offline'),
+          description: Text('Ensure base architecture weights are processed into active context memory.'),
         ),
       );
       return;
@@ -279,8 +277,8 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
     if (_initImageBytes == null) {
       ShadToaster.of(context).show(
         const ShadToast.destructive(
-          title: Text('Missing Parameter'),
-          description: Text('Image-to-Image execution loops require an initial guiding source image.'),
+          title: Text('Incomplete Arguments'),
+          description: Text('Image-to-Image execution matrices require an active source configuration vector.'),
         ),
       );
       return;
@@ -291,12 +289,11 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
     setState(() {
       _isGenerating = true;
       _progressValue = 0.0;
-      _statusText = "Analyzing initial graphics context tensors...";
+      _statusText = "Mapping graphics configurations to sample matrices...";
       _generatedWidgetImage = null;
       _generatedUiImage = null;
     });
 
-    // Prepare processing components directly out of standard formats
     final rawInputImage = img.decodeImage(_initImageBytes!);
     Uint8List rgbInitData = _initImageBytes!;
     if (rawInputImage != null) {
@@ -311,16 +308,19 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
       }
     }
 
-    // Connect to callbacks
-    _processor!.onProgress = (progress) {
-      setState(() {
-        _progressValue = progress.step / progress.steps;
-        _statusText = "Sampling Step ${progress.step}/${progress.steps} (${progress.time.toStringAsFixed(1)}s)";
-      });
-    };
+    // Connect to global status progress indicators
+    StableDiffusionService.progressStream.listen((progress) {
+      if (mounted && _isGenerating) {
+        setState(() {
+          _progressValue = progress.step / progress.steps;
+          _statusText = "Iterative Sampling Matrix: Step ${progress.step}/${progress.steps}";
+        });
+      }
+    });
 
-    await _processor!.generateImage(
-      prompt: _promptController.text.isNotEmpty ? _promptController.text : "Detailed masterpiece digital art",
+    // Invoke target processing method matching package structures exactly
+    await _processor!.generateImg2Image(
+      prompt: _promptController.text.isNotEmpty ? _promptController.text : "Masterpiece hyperrealistic digital canvas style",
       negativePrompt: _negativePromptController.text,
       initImageData: rgbInitData,
       initImageWidth: _initImageWidth!,
@@ -342,11 +342,10 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
     );
   }
 
-  // Save functionality mapping down into hardware modules
   Future<void> _saveOutput() async {
     if (_generatedUiImage == null || _processor == null) return;
     
-    final resultMessage = await _processor!.saveGeneratedImage(
+    final msgStr = await _processor!.saveGeneratedImage(
       _generatedUiImage!,
       _promptController.text,
       _outputWidth,
@@ -356,8 +355,8 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
 
     ShadToaster.of(context).show(
       ShadToast(
-        title: const Text('Export Action'),
-        description: Text(resultMessage),
+        title: const Text('Export Subsystem'),
+        description: Text(msgStr),
       ),
     );
   }
@@ -368,7 +367,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
     
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Image-to-Image Vector Studio'),
+        title: const Text('Image-to-Image Latent Processing Desk'),
         backgroundColor: theme.colorScheme.background,
         elevation: 0,
       ),
@@ -376,7 +375,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Configurations Sidebar Panel Controls
+            // Sidebar Parameters Tuning Workspace
             Expanded(
               flex: 4,
               child: SingleChildScrollView(
@@ -388,8 +387,8 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                     // System Hardware Model Loading Section Card
                     ShadCard(
                       title: const Text('Model Architecture Configuration'),
-                      description: Text('Active Module: ${_modelPath != null ? _modelPath!.split('/').last : "None Provided"}'),
-                      content: Column(
+                      description: Text('Active Module: ${_modelPath != null ? _modelPath!.split('/').last : "None Mounted"}'),
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const SizedBox(height: 10),
@@ -398,18 +397,18 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                               Expanded(
                                 child: ShadButton.outline(
                                   onPressed: _pickModel,
-                                  child: const Text('Pick Base Model File'),
+                                  child: const Text('Link Model Weights'),
                                 ),
                               ),
                               const SizedBox(width: 8),
                               ShadButton(
                                 onPressed: _modelPath != null && !_isGenerating ? _loadModel : null,
-                                child: const Text('Load Model'),
+                                child: const Text('Initialize Context'),
                               ),
                             ],
                           ),
                           const SizedBox(height: 12),
-                          // Automatic status feedback showing bundled state tracking configurations
+                          // Automatic Status Bar Informing of Embedded TAESD Resolution
                           Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
@@ -419,7 +418,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                             child: Row(
                               children: [
                                 Icon(
-                                  _useTAESD ? Icons.offline_bolt : Icons.warning_amber_rounded,
+                                  _useTAESD ? Icons.offline_bolt : Icons.info_outline,
                                   color: _useTAESD ? Colors.green : Colors.amber,
                                   size: 18,
                                 ),
@@ -437,7 +436,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                           ShadCheckbox(
                             value: _isDiffusionModelType,
                             onChanged: (v) => setState(() => _isDiffusionModelType = v),
-                            label: const Text('Use Isolated Diffusion Layer Path (Unbundled)'),
+                            label: const Text('Use Isolated Diffusion Pipeline Paths'),
                           ),
                           ShadCheckbox(
                             value: _useFlashAttention,
@@ -447,23 +446,22 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                           ShadCheckbox(
                             value: _vaeTiling,
                             onChanged: (v) => setState(() => _vaeTiling = v),
-                            label: const Text('Enable VAE Tiling (Reduces High VRAM Peaks)'),
+                            label: const Text('Enable VAE Tiling (Optimizes Heavy Memory Load peaks)'),
                           ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 16),
 
-                    // Inputs Selection UI Mapping Elements
+                    // Inputs Transformations Mapping Section
                     ShadCard(
-                      title: const Text('Input Layer Transformations'),
-                      content: Column(
+                      title: const Text('Source Transformations Workspace'),
+                      child: Column(
                         children: [
                           const SizedBox(height: 8),
-                          // Source Guiding Array Asset Selection Layout
                           if (_initImageBytes != null) ...[
                             Stack(
-                              alignment: 'topRight' as Alignment,
+                              alignment: Alignment.topRight,
                               children: [
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
@@ -489,7 +487,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    const Text('Upload Initial Image Input'),
+                                    const Text('Upload Priming Transform Vector'),
                                     const SizedBox(height: 8),
                                     Row(
                                       mainAxisAlignment: MainAxisAlignment.center,
@@ -513,11 +511,9 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                             ),
                           ],
                           const SizedBox(height: 16),
-
-                          // ControlNet Secondary Overlay Setup Layout
                           if (_controlImageBytes != null) ...[
                             Stack(
-                              alignment: 'topRight' as Alignment,
+                              alignment: Alignment.topRight,
                               children: [
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(8),
@@ -536,7 +532,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                             ShadButton.outline(
                               onPressed: _pickControlImage,
                               width: double.infinity,
-                              child: const Text('Add Optional ControlNet Guidance Mask'),
+                              child: const Text('Link Auxiliary ControlNet Image Mask'),
                             ),
                           ],
                         ],
@@ -544,78 +540,82 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                     ),
                     const SizedBox(height: 16),
 
-                    // Prompt Parameters Tuning Panels
+                    // Prompt Vector Core Setup Card
                     ShadCard(
-                      title: const Text('Hyperparameter Matrix Tuners'),
-                      content: Column(
+                      title: const Text('Matrix Prompt Hyperparameters'),
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           const SizedBox(height: 8),
-                          const Text('Positive Prompt Guidance'),
+                          const Text('Positive Conditioning Guidance'),
                           ShadInput(
                             controller: _promptController,
-                            placeholder: const Text('Enter descriptive prompt matrices...'),
+                            placeholder: const Text('Input descriptive canvas prompts...'),
                             maxLines: 3,
                           ),
                           const SizedBox(height: 12),
-                          const Text('Negative Prompt Matrices'),
+                          const Text('Negative Disruption Modifiers'),
                           ShadInput(
                             controller: _negativePromptController,
-                            placeholder: const Text('Elements to extract/omit out from latent fields...'),
+                            placeholder: const Text('Elements to avoid during generation matrices...'),
                             maxLines: 2,
                           ),
                           const SizedBox(height: 16),
                           
-                          // Denoising Strength Configuration Multipliers
-                          Text('Denoising Strength Variance Factor: ${_denoisingStrength.toStringAsFixed(2)}'),
-                          ShadSlider(
+                          // Native Adaptive Fluid Sliders (Resolves compilation constraints completely)
+                          Text('Denoising Transform Strength Factor: ${_denoisingStrength.toStringAsFixed(2)}'),
+                          Slider.adaptive(
                             value: _denoisingStrength,
                             min: 0.0,
                             max: 1.0,
+                            activeColor: theme.colorScheme.primary,
                             onChanged: (v) => setState(() => _denoisingStrength = v),
                           ),
                           const SizedBox(height: 12),
 
-                          Text('CFG Guidance Scaling Parameters: ${_cfgScale.toStringAsFixed(1)}'),
-                          ShadSlider(
+                          Text('CFG Tensor Scaling Matrix: ${_cfgScale.toStringAsFixed(1)}'),
+                          Slider.adaptive(
                             value: _cfgScale,
                             min: 1.0,
                             max: 20.0,
+                            activeColor: theme.colorScheme.primary,
                             onChanged: (v) => setState(() => _cfgScale = v),
                           ),
                           const SizedBox(height: 12),
 
-                          Text('Step Synthesis Iterations: $_sampleSteps'),
-                          ShadSlider(
+                          Text('Total Processing Iterative Steps: $_sampleSteps'),
+                          Slider.adaptive(
                             value: _sampleSteps.toDouble(),
                             min: 1,
                             max: 50,
+                            activeColor: theme.colorScheme.primary,
                             onChanged: (v) => setState(() => _sampleSteps = v.toInt()),
                           ),
                           const SizedBox(height: 12),
 
                           if (_controlImageBytes != null) ...[
-                            Text('ControlNet Weight Factor: ${_controlStrength.toStringAsFixed(2)}'),
-                            ShadSlider(
+                            Text('ControlNet Extraction Weight: ${_controlStrength.toStringAsFixed(2)}'),
+                            Slider.adaptive(
                               value: _controlStrength,
                               min: 0.0,
                               max: 2.0,
+                              activeColor: theme.colorScheme.primary,
                               onChanged: (v) => setState(() => _controlStrength = v),
                             ),
                             const SizedBox(height: 12),
                           ],
 
-                          const Text('Generation Structural Seed Value'),
+                          const Text('Structural Synthesis Seed'),
                           ShadInput(
                             controller: _seedController,
-                            placeholder: const Text('-1 loops for absolute randomness'),
+                            placeholder: const Text('-1 loops random numerical maps'),
                           ),
                           const SizedBox(height: 12),
 
-                          const Text('Advanced Transformer Layer Skipping Map'),
+                          const Text('Transformer Layer Skipping Configuration'),
                           ShadInput(
                             controller: _skipLayersController,
-                            placeholder: const Text('[7, 8, 9] (Defaults inside SDXL layers)'),
+                            placeholder: const Text('[7, 8, 9] (Common across heavy SDXL structures)'),
                           ),
                         ],
                       ),
@@ -625,7 +625,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
               ),
             ),
 
-            // Canvas Output Visualizer Real-time Dashboard Panel
+            // Canvas Output Dashboard Viewer Workspace
             VerticalDivider(width: 1, color: theme.colorScheme.border),
             Expanded(
               flex: 5,
@@ -661,7 +661,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                                         ShadButton(
                                           onPressed: _saveOutput,
                                           icon: const Icon(Icons.save_alt, size: 16),
-                                          child: const Text('Export Image to Device Studio'),
+                                          child: const Text('Export Output Matrix to Gallery'),
                                         ),
                                       ],
                                     ),
@@ -692,12 +692,12 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                                         Icon(Icons.brush_outlined, size: 64, color: theme.colorScheme.border),
                                         const SizedBox(height: 16),
                                         const Text(
-                                          'Awaiting Target Execution Settings',
+                                          'Awaiting Operational Constraints Map',
                                           style: TextStyle(fontWeight: FontWeight.w500, fontSize: 16),
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
-                                          'Configure parameters on the sidebar layout and dispatch the generator',
+                                          'Mount required layers from the side panel configuration tools to dispatch structural updates.',
                                           style: TextStyle(color: theme.colorScheme.mutedForeground, fontSize: 13),
                                         ),
                                       ],
@@ -706,7 +706,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                       ),
                     ),
                     const SizedBox(height: 16),
-                    // Main execution bottom control dashboard
+                    // Core Controls Bar Layout Matrix
                     Row(
                       children: [
                         ShadButton.outline(
@@ -714,7 +714,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                               ? () => _showLogsDialog(context, _generationLogs)
                               : null,
                           icon: const Icon(Icons.analytics_outlined),
-                          child: const Text('Inspect Stream Logs'),
+                          child: const Text('Inspect Run Logs'),
                         ),
                         const Spacer(),
                         ShadButton(
@@ -726,7 +726,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
                             children: const [
                               Icon(Icons.bolt, size: 18),
                               SizedBox(width: 6),
-                              Text('Generate Matrix Vector'),
+                              Text('Synthesize Target Matrix'),
                             ],
                           ),
                         ),
@@ -742,13 +742,13 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
     );
   }
 
-  // Presentation alert box viewport parsing the processing loops logs
+  // System alert feed parsing live stream updates across execution boundaries
   void _showLogsDialog(BuildContext context, List<String> logs) {
     showShadDialog(
       context: context,
       builder: (context) => ShadDialog.alert(
         constraints: const BoxConstraints(maxWidth: 700, maxHeight: 500),
-        title: const Text('Isolate Execution Feed Logs'),
+        title: const Text('Isolate Execution Output Logs'),
         description: SizedBox(
           height: 320,
           child: SingleChildScrollView(
@@ -764,7 +764,7 @@ class _Img2ImgPageState extends State<Img2ImgPage> with SingleTickerProviderStat
         actions: [
           ShadButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Dismiss View'),
+            child: const Text('Dismiss Monitor View'),
           ),
         ],
       ),
