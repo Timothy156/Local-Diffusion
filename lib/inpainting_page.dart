@@ -104,11 +104,11 @@ class _InpaintingPageState extends State<InpaintingPage>
   bool useVAETiling = false;
   double clipSkip = 0.0; // Default changed to 0.0
   bool useVAE = false;
-  String samplingMethod = 'euler_a';
-  double cfg = 7;
-  int steps = 25;
-  int width = 512;
-  int height = 512;
+  String samplingMethod = 'tcd';
+  double cfg = 1;
+  int steps = 2;
+  int width = 256;
+  int height = 256;
   String seed = "-1";
   String prompt = '';
   String negativePrompt = '';
@@ -135,9 +135,7 @@ class _InpaintingPageState extends State<InpaintingPage>
   String _selectedBackend =
       FFIBindings.getCurrentBackend(); // Get initial backend
   final List<String> _availableBackends = [
-    'CPU',
-    'Vulkan',
-    'OpenCL'
+    'CPU'
   ]; // Available backends
 
   // --- State for Advanced Sampling Options (copied from img2img_page.dart) ---
@@ -193,18 +191,14 @@ class _InpaintingPageState extends State<InpaintingPage>
   String _controlImageProcessingMode =
       'Resize'; // 'Resize' or 'Crop' for ControlNet image
   final List<String> samplingMethods = const [
+    'tcd',
+    'lcm'
     'euler_a',
     'euler',
-    'heun',
     'dpm2',
     'dmp ++2s_a',
     'dmp++2m',
-    'dpm++2mv2',
-    'ipndm',
-    'ipndm_v',
-    'lcm',
-    'ddim_trailing',
-    'tcd'
+    'dpm++2mv2'
   ];
 
   // Removed getWidthOptions and getHeightOptions as they are no longer needed
@@ -635,22 +629,22 @@ class _InpaintingPageState extends State<InpaintingPage>
       prompt = '';
       negativePrompt = '';
       // Reset advanced options to defaults if needed
-      // clipSkip = 0.0;
-      // eta = 0.0;
-      // guidance = 3.5;
-      // slgScale = 0.0;
-      // skipLayersText = '';
-      // _skipLayersController.clear();
-      // skipLayerStart = 0.01;
-      // skipLayerEnd = 0.2;
-      // samplingMethod = 'euler_a';
-      // cfg = 7;
-      // steps = 25;
-      // width = 512;
-      // height = 512;
-      // seed = "-1";
-      // strength = 0.5;
-      // controlStrength = 0.9;
+      clipSkip = 0.0;
+      eta = 0.0;
+      guidance = 3.5;
+      slgScale = 0.0;
+      skipLayersText = '';
+      _skipLayersController.clear();
+      skipLayerStart = 0.01;
+      skipLayerEnd = 0.2;
+      samplingMethod = 'tcd';
+      cfg = 1;
+      steps = 2;
+      width = 256;
+      height = 256;
+      seed = "-1";
+      strength = 0.5;
+      controlStrength = 0.9;
       // _controlImageProcessingMode = 'Resize';
       // _isDiffusionModelType = false;
     });
@@ -659,8 +653,8 @@ class _InpaintingPageState extends State<InpaintingPage>
 
   void showModelLoadDialog() {
     String selectedQuantization = 'NONE';
-    String selectedSchedule = 'DEFAULT';
-    bool useFlashAttention = false;
+    String selectedSchedule = 'EXPONENTIAL';
+    bool useFlashAttention = true;
     String? flashAttentionError; // Added state for error message
 
     final List<String> quantizationOptions = [
@@ -680,10 +674,10 @@ class _InpaintingPageState extends State<InpaintingPage>
     ];
 
     final List<String> scheduleOptions = [
+      'EXPONENTIAL',
       'DEFAULT',
       'DISCRETE',
       'KARRAS',
-      'EXPONENTIAL',
       'AYS'
     ];
 
@@ -3399,8 +3393,8 @@ class _InpaintingPageState extends State<InpaintingPage>
                   child: ShadSlider(
                     initialValue: cfg,
                     min: 1,
-                    max: 20,
-                    divisions: 38,
+                    max: 2,
+                    divisions: 20,
                     onChanged: (v) => setState(() => cfg = v),
                   ),
                 ),
@@ -3416,8 +3410,8 @@ class _InpaintingPageState extends State<InpaintingPage>
                   child: ShadSlider(
                     initialValue: steps.toDouble(),
                     min: 1,
-                    max: 50,
-                    divisions: 49,
+                    max: 4,
+                    divisions: 3,
                     onChanged: (v) => setState(() => steps = v.toInt()),
                   ),
                 ),
