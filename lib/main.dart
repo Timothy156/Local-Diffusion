@@ -275,7 +275,7 @@ class _StableDiffusionAppState extends State<StableDiffusionApp>
   bool _showLogsButton = false; 
   bool _isDiffusionModelType = false; 
   String _selectedBackend = 'CPU'; 
-  final List<String> _availableBackends = ['CPU', 'OpenCL']; 
+  final List<String> _availableBackends = ['CPU']; 
 
   void _showTemporaryError(String error) {
     _errorMessageTimer?.cancel();
